@@ -976,18 +976,23 @@ def parse_race_entries(html, race_no=None):
     从 HKJC 排位表 (RaceCard) 页面 HTML 解析参赛马匹信息。
 
     页面结构（zh-hk/local/information/racecard）：
-    - 每匹马一行 <tr class="f_fs11">，包含 horseid= 链接
-    - td 列顺序（27列）：
-        [0]马号  [1]班次  [2](空)  [3]马名  [4]烙号
-        [5]负磅  [6]骑师  [7](空)  [8]档位  [9]练马师
-        [10]?   [11]评分  [12]评分变化  ...
-        [18]性别 [19]总奖金 ...
+    - 正选马：<tr class="f_tac f_fs13">，共 27 列 TD
+      [0]马号  [1]班次评分  [2]颜色图  [3]马名(链接)  [4]烙号
+      [5]负磅  [6]骑师(链接)  [7]?  [8]档位  [9]练马师(链接)
+      [10-11]评分  [12]评分变化 ...
+    - 后备马：<tr class="bg_white f_tac f_fs13">，结构不同，须排除
+
+    关键修复：
+    1. TR 匹配只取 class="f_tac f_fs13"（排除后备马 bg_white）
+    2. 马名/ID 链接的 onclick 属性紧跟 href="..." 后无空格，
+       导致 [^"]+ 贪心匹配掉闭合引号，改用 [^>]* 匹配至 > 为止
     """
     horses = []
+    seen_ids = set()
 
-    # 定位所有含 horseid 的 tr 行（排位表用 class="f_fs11"）
+    # 正选马专属 class，排除后备马（bg_white）
     tr_pattern = re.compile(
-        r'<tr[^>]*class="[^"]*f_fs\d+[^"]*"[^>]*>(.*?)</tr>',
+        r'<tr[^>]*class="f_tac f_fs13"[^>]*>(.*?)</tr>',
         re.DOTALL | re.IGNORECASE
     )
     td_pattern = re.compile(r'<td[^>]*>(.*?)</td>', re.DOTALL | re.IGNORECASE)
@@ -998,43 +1003,34 @@ def parse_race_entries(html, race_no=None):
             continue
 
         # 提取 horseid 和马名
-        horse_link = re.search(r'horseid=([A-Za-z0-9_]+)', tr_content, re.IGNORECASE)
-        name_link  = re.search(r'href="/zh-hk/local/information/horse\?horseid=[^"]+[^>]*>([^<]+)</a>', tr_content)
-        if not horse_link:
+        # href="/...horse?horseid=XXX" onclick="...">NAME</a>
+        # 注意：onclick= 紧跟 href="..." 后面无空格，[^"]+ 会吞掉闭合 "，
+        # 所以用 [^>]* 匹配至 > 为止
+        horse_m = re.search(r'horseid=([A-Za-z0-9_]+)[^>]*>([^<]+)</a>', tr_content)
+        if not horse_m:
             continue
-        horse_id   = horse_link.group(1).strip()
-        horse_name = name_link.group(1).strip() if name_link else ""
+        horse_id   = horse_m.group(1).strip()
+        if horse_id in seen_ids:
+            continue
+        seen_ids.add(horse_id)
+        horse_name = horse_m.group(2).strip()
 
-        # 提取骑师 (jockeyid=)
-        jockey_m = re.search(r'jockeyid=([A-Za-z0-9_]+)', tr_content, re.IGNORECASE)
-        if jockey_m:
-            jockey_text = re.search(
-                r'jockeyid=' + jockey_m.group(1) + r'[^>]*>([^<]+)</a>',
-                tr_content
-            )
-            jockey = jockey_text.group(1).strip() if jockey_text else ""
-        else:
-            jockey = ""
+        # 提取骑师
+        jockey_m = re.search(r'jockeyid=([A-Za-z0-9_]+)[^>]*>([^<]+)</a>', tr_content)
+        jockey = jockey_m.group(2).strip() if jockey_m else ""
 
-        # 提取练马师 (trainerid=)
-        trainer_m = re.search(r'trainerid=([A-Za-z0-9_]+)', tr_content, re.IGNORECASE)
-        if trainer_m:
-            trainer_text = re.search(
-                r'trainerid=' + trainer_m.group(1) + r'[^>]*>([^<]+)</a>',
-                tr_content
-            )
-            trainer = trainer_text.group(1).strip() if trainer_text else ""
-        else:
-            trainer = ""
+        # 提取练马师
+        trainer_m = re.search(r'trainerid=([A-Za-z0-9_]+)[^>]*>([^<]+)</a>', tr_content)
+        trainer = trainer_m.group(2).strip() if trainer_m else ""
 
-        # 解析所有 td 纯文本，维持列索引
+        # 解析所有 td 纯文本（去掉子标签），维持列索引
         tds_raw = [td_m.group(1) for td_m in td_pattern.finditer(tr_content)]
         tds = [re.sub(r'<[^>]+>', ' ', td).strip() for td in tds_raw]
 
         def get_td(idx, default=""):
             return tds[idx] if idx < len(tds) else default
 
-        # TD[0]=马号，TD[8]=档位，TD[5]=负磅（排位表无赔率）
+        # TD[0]=马号, TD[3]=马名, TD[5]=负磅, TD[6]=骑师, TD[8]=档位, TD[9]=练马师
         try:
             horse_no = int(get_td(0, "0").strip())
         except (ValueError, IndexError):
@@ -1045,7 +1041,6 @@ def parse_race_entries(html, race_no=None):
         except (ValueError, IndexError):
             barrier = 0
 
-        # 负磅
         try:
             weight = float(get_td(5, "0").replace(",", ""))
         except (ValueError, IndexError):
@@ -1059,11 +1054,10 @@ def parse_race_entries(html, race_no=None):
             "jockey":  jockey,
             "trainer": trainer,
             "weight":  weight,
-            "final_odds":   None,   # 排位表无赔率，赛后补充
+            "final_odds":   None,
             "opening_odds": None,
             "history":         [],
             "current_rating":  40,
-            # 各维度评分（默认 50 = 数据缺失中性值）
             "history_same_condition_score": 40,
             "history_same_venue_score":     40,
             "class_fit_score":              50,

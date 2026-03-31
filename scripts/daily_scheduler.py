@@ -261,16 +261,16 @@ def _run_single_prediction(script_path: str, date_str: str, venue: str, race_no:
         # 尝试解析 JSON 输出
         data = json.loads(json_str)
 
-        # 提取前3预测（按 final_score 降序的前3个马号）
+        # 提取前3预测（按 total_score 降序的前3个马号）
         horses = data.get("horses", [])
-        sorted_horses = sorted(horses, key=lambda h: h.get("final_score", 0), reverse=True)
+        sorted_horses = sorted(horses, key=lambda h: h.get("total_score", 0), reverse=True)
         top3 = [h.get("horse_no") or h.get("no") for h in sorted_horses[:3]]
 
         return {
             "horses": horses,
             "top3_predicted": top3,
             "scores": {
-                str(h.get("horse_no") or h.get("no")): h.get("final_score", 0)
+                str(h.get("horse_no") or h.get("no")): h.get("total_score", 0)
                 for h in horses
             },
             "probabilities": {
