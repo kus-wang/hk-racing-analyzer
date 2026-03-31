@@ -1,0 +1,5 @@
+﻿.cache/
+.archive/
+.evolution/
+scripts/__pycache__/
+*.pyc
