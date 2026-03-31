@@ -1,5 +1,35 @@
 {
   "name": "hk-racing-analyzer",
-  "installedAt": 1774856262604,
-  "source": "import"
+  "version": "1.3.0",
+  "description": "香港赛马数据分析和预测工具。基于历史战绩、赔率走势、配速分段等数据进行量化分析，给出前3名概率分布和投注建议。HKJC赛马专用。",
+  "description_en": "HK Horse Racing Analyzer — Quantitative prediction tool for HKJC races, delivering top-3 probability distribution via historical performance, odds trends, sectional timing, jockey/trainer stats, and expert consensus.",
+  "author": "kus-wang",
+  "homepage": "https://github.com/kus-wang/hk-racing-analyzer",
+  "tags": [
+    "horse-racing",
+    "hkjc",
+    "prediction",
+    "sports-analytics",
+    "hong-kong",
+    "赛马",
+    "数据分析"
+  ],
+  "keywords": [
+    "hkjc",
+    "hk racing",
+    "horse racing analysis",
+    "sha tin",
+    "happy valley",
+    "赛马预测",
+    "香港赛马"
+  ],
+  "license": "MIT",
+  "minOpenClawVersion": "1.0.0",
+  "platform": ["win32", "darwin", "linux"],
+  "dependencies": {
+    "python": ">=3.10",
+    "packages": ["requests", "beautifulsoup4", "lxml"]
+  },
+  "source": "github",
+  "repository": "https://github.com/kus-wang/hk-racing-analyzer"
 }
