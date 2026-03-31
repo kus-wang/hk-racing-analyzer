@@ -185,9 +185,7 @@ hk-racing-analyzer/
 
 ### v1.4.1 — 2026-03-31
 - 📝 **文档更新**：SKILL.md 新增 HKJC 贴士指数行（数据来源/分析要点/权重6%）；SKILL_EN.md 同步更新
-- 🏗️ **重构：模块化拆分**：`analyze_race.py` 拆分为 10 个独立模块（`config` / `weights` / `probability` / `scoring` / `cache` / `fetch` / `parse` / `analyze` / `output` / `main`）
-- ✅ `analyze_race.py` 保留为向后兼容入口层，CLI 用法完全不变
-- 🔧 `config.py` 新增 `tips_index` 缓存类型（30分钟TTL）；`cache.py` 优化贴士指数URL识别
+
 
 ### v1.4.0 — 2026-03-31
 - 🏗️ **重构：模块化拆分**：`analyze_race.py` 拆分为 10 个独立模块（`config.py` / `weights.py` / `probability.py` / `scoring.py` / `cache.py` / `fetch.py` / `parse.py` / `analyze.py` / `output.py` / `main.py`）
