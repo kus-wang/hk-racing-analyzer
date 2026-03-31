@@ -1,0 +1,841 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+香港赛马 — 每日自动化调度脚本
+============================
+职责：
+  1. 检测明天/今天是否为赛马日
+  2. 赛马日前一天 → 批量预测所有场次，保存预测存档
+  3. 赛马日当天赛后 → 抓取实际结果，对比前一天预测，计算精度
+  4. 根据回测结果生成「自我进化建议报告」（供用户审阅，不直接修改 Skill）
+
+用法（由 WorkBuddy 定时任务调用）：
+  python daily_scheduler.py
+
+流程判断：
+  - 当前时间 < 11:00 → 检测今天是否赛马日，若是则当天赛事已赛完（昨晚跑马地），运行回测
+  - 当前时间 11:00-22:00 → 检测明天是否赛马日，若是则预测明天所有场次
+  - 当前时间 > 22:00 → 检测今天赛事是否已全部结束，若是则运行回测
+  （实际通过 --mode 参数控制，由 automation prompt 决定）
+"""
+
+import sys
+import io
+import os
+import json
+import re
+import math
+import hashlib
+import time
+import argparse
+from datetime import datetime, timedelta
+from urllib.request import urlopen, Request
+from urllib.error import URLError, HTTPError
+from urllib.parse import urlencode
+
+if sys.platform == "win32":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+
+# ──────────────────────────────────────────────────────────────
+# 路径配置
+# ──────────────────────────────────────────────────────────────
+_SCRIPT_DIR   = os.path.dirname(os.path.abspath(__file__))
+_SKILL_DIR    = os.path.dirname(_SCRIPT_DIR)
+CACHE_DIR     = os.path.join(_SKILL_DIR, ".cache")
+ARCHIVE_DIR   = os.path.join(_SKILL_DIR, ".archive")      # 预测存档
+EVOLUTION_DIR = os.path.join(_SKILL_DIR, ".evolution")    # 进化建议报告
+
+for d in [CACHE_DIR, ARCHIVE_DIR, EVOLUTION_DIR]:
+    os.makedirs(d, exist_ok=True)
+
+HKJC_BASE      = "https://racing.hkjc.com"
+RACE_DATE_URL  = HKJC_BASE + "/racing/information/Chinese/Racing/RaceCard.aspx"
+RESULT_URL     = HKJC_BASE + "/racing/information/Chinese/Racing/LocalResults.aspx"
+
+# 缓存 TTL（秒）
+CACHE_TTL = {
+    "race_card":    30 * 60,
+    "race_result":  7  * 24 * 3600,
+    "horse_history": 24 * 3600,
+    "default":      60 * 60,
+}
+
+# ──────────────────────────────────────────────────────────────
+# 通用工具
+# ──────────────────────────────────────────────────────────────
+
+def log(msg: str):
+    ts = datetime.now().strftime("%H:%M:%S")
+    print(f"[{ts}] {msg}", flush=True)
+
+
+def _cache_path(key: str) -> str:
+    h = hashlib.md5(key.encode()).hexdigest()
+    return os.path.join(CACHE_DIR, f"{h}.json")
+
+
+def cache_get(key: str, ttl: int) -> dict | None:
+    p = _cache_path(key)
+    if not os.path.exists(p):
+        return None
+    age = time.time() - os.path.getmtime(p)
+    if age > ttl:
+        return None
+    with open(p, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def cache_set(key: str, data: dict):
+    p = _cache_path(key)
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def fetch_html(url: str, cache_key: str = None, ttl: int = None) -> str:
+    """抓取 HTML，支持缓存。返回 HTML 字符串，失败返回空字符串。"""
+    if cache_key and ttl:
+        cached = cache_get(cache_key, ttl)
+        if cached:
+            return cached.get("html", "")
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "zh-HK,zh;q=0.9,en;q=0.8",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    }
+    try:
+        req = Request(url, headers=headers)
+        with urlopen(req, timeout=20) as resp:
+            html = resp.read().decode("utf-8", errors="replace")
+        if cache_key:
+            cache_set(cache_key, {"html": html, "url": url, "ts": time.time()})
+        return html
+    except Exception as e:
+        log(f"  ⚠ 抓取失败：{url}  ({e})")
+        return ""
+
+
+# ──────────────────────────────────────────────────────────────
+# Step 1 — 检测指定日期是否为赛马日
+# ──────────────────────────────────────────────────────────────
+
+def detect_race_day(date_str: str) -> dict | None:
+    """
+    检测指定日期（YYYY/MM/DD）是否为赛马日。
+    返回 {"date": ..., "venue": "ST"|"HV", "total_races": N} 或 None（非赛马日）。
+    """
+    log(f"🔍 检测 {date_str} 是否为赛马日...")
+
+    # 尝试沙田
+    for venue_code, venue_name in [("ST", "沙田"), ("HV", "跑马地")]:
+        url = f"{RACE_DATE_URL}?RaceDate={date_str}&Venue={venue_code}&RaceNo=1"
+        ckey = f"racecard_{date_str}_{venue_code}"
+        html = fetch_html(url, ckey, CACHE_TTL["race_card"])
+
+        if not html:
+            continue
+
+        # 检测是否存在赛事数据（排位表特征标志）
+        if "没有赛事资料" in html or "No Race Information" in html:
+            continue
+        if "RaceNo" not in html and "马名" not in html and "HorseNo" not in html:
+            continue
+
+        # 提取总场次数
+        total_races = _parse_total_races(html, date_str, venue_code)
+        if total_races and total_races > 0:
+            log(f"  ✅ {date_str} 是赛马日！场地：{venue_name}，共 {total_races} 场")
+            return {"date": date_str, "venue": venue_code, "venue_name": venue_name, "total_races": total_races}
+
+    log(f"  ❌ {date_str} 不是赛马日，跳过。")
+    return None
+
+
+def _parse_total_races(html: str, date_str: str, venue: str) -> int:
+    """从排位表 HTML 中提取总场次数。"""
+    # HKJC 页面通常包含场次导航链接，如 RaceNo=1 到 RaceNo=11
+    race_nos = set(re.findall(r"RaceNo=(\d+)", html))
+    if race_nos:
+        return max(int(n) for n in race_nos)
+
+    # 备用：搜索「第X场」文字
+    matches = re.findall(r"第\s*(\d+)\s*场", html)
+    if matches:
+        return max(int(m) for m in matches)
+
+    # 无法解析时返回默认值（香港赛马通常 8-11 场）
+    return 10
+
+
+# ──────────────────────────────────────────────────────────────
+# Step 2 — 批量预测（调用 analyze_race.py）
+# ──────────────────────────────────────────────────────────────
+
+def run_batch_predictions(race_info: dict) -> dict:
+    """
+    对指定赛马日的所有场次运行预测，返回预测存档字典。
+    存档格式：
+    {
+      "meta": {"date": ..., "venue": ..., "total_races": ..., "predicted_at": ...},
+      "races": {
+        "1": {"horses": [...], "top3_predicted": [马号, 马号, 马号], "scores": {...}},
+        ...
+      }
+    }
+    """
+    date_str    = race_info["date"]
+    venue       = race_info["venue"]
+    total_races = race_info["total_races"]
+
+    log(f"\n🏇 开始批量预测：{date_str} {race_info['venue_name']} 共 {total_races} 场")
+
+    archive = {
+        "meta": {
+            "date": date_str,
+            "venue": venue,
+            "venue_name": race_info["venue_name"],
+            "total_races": total_races,
+            "predicted_at": datetime.now().isoformat(),
+        },
+        "races": {}
+    }
+
+    analyze_script = os.path.join(_SCRIPT_DIR, "analyze_race.py")
+
+    for race_no in range(1, total_races + 1):
+        log(f"  → 预测第 {race_no}/{total_races} 场...")
+        result = _run_single_prediction(analyze_script, date_str, venue, race_no)
+        if result:
+            archive["races"][str(race_no)] = result
+            top3 = result.get("top3_predicted", [])
+            log(f"     预测前3：{top3}")
+        else:
+            log(f"     ⚠ 第 {race_no} 场预测失败，跳过")
+
+    # 保存预测存档
+    archive_file = _archive_path(date_str, venue, "prediction")
+    with open(archive_file, "w", encoding="utf-8") as f:
+        json.dump(archive, f, ensure_ascii=False, indent=2)
+    log(f"\n✅ 预测存档已保存：{archive_file}")
+
+    return archive
+
+
+def _run_single_prediction(script_path: str, date_str: str, venue: str, race_no: int) -> dict | None:
+    """
+    调用 analyze_race.py 对单场进行预测，解析 JSON 输出。
+    """
+    import subprocess
+    cmd = [
+        sys.executable, script_path,
+        "--date", date_str,
+        "--venue", venue,
+        "--race", str(race_no),
+        "--output", "json",
+    ]
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
+        )
+        output = proc.stdout.strip()
+        if not output:
+            return None
+
+        # 尝试解析 JSON 输出
+        # analyze_race.py 在 --output json 模式下输出完整 JSON
+        data = json.loads(output)
+
+        # 提取前3预测（按 final_score 降序的前3个马号）
+        horses = data.get("horses", [])
+        sorted_horses = sorted(horses, key=lambda h: h.get("final_score", 0), reverse=True)
+        top3 = [h.get("horse_no") or h.get("no") for h in sorted_horses[:3]]
+
+        return {
+            "horses": horses,
+            "top3_predicted": top3,
+            "scores": {
+                str(h.get("horse_no") or h.get("no")): h.get("final_score", 0)
+                for h in horses
+            },
+            "probabilities": {
+                str(h.get("horse_no") or h.get("no")): h.get("probability", 0)
+                for h in horses
+            },
+            "raw_output": data,
+        }
+    except subprocess.TimeoutExpired:
+        log(f"     ⚠ 超时（120s），跳过")
+        return None
+    except json.JSONDecodeError as e:
+        log(f"     ⚠ JSON 解析失败：{e}")
+        # 尝试从 stdout 中正则提取前3名
+        return _fallback_parse_output(proc.stdout if 'proc' in dir() else "")
+    except Exception as e:
+        log(f"     ⚠ 异常：{e}")
+        return None
+
+
+def _fallback_parse_output(text: str) -> dict | None:
+    """从 markdown 格式输出中提取预测前3名（降级方案）。"""
+    if not text:
+        return None
+    # 匹配表格行：| 1 | 3 | 马名 | 25% | ...
+    rows = re.findall(r"\|\s*\d+\s*\|\s*(\d+)\s*\|", text)
+    if rows:
+        return {"top3_predicted": rows[:3], "horses": [], "scores": {}, "probabilities": {}}
+    return None
+
+
+# ──────────────────────────────────────────────────────────────
+# Step 3 — 抓取实际赛果
+# ──────────────────────────────────────────────────────────────
+
+def fetch_actual_results(race_info: dict) -> dict:
+    """
+    抓取指定赛马日的实际赛果，返回结果字典。
+    格式：{"1": [{"pos":1,"no":"3","name":"马名"}, ...], ...}
+    """
+    date_str    = race_info["date"]
+    venue       = race_info["venue"]
+    total_races = race_info["total_races"]
+
+    log(f"\n📊 抓取实际赛果：{date_str} {race_info['venue_name']}")
+
+    results = {}
+    for race_no in range(1, total_races + 1):
+        url   = f"{RESULT_URL}?RaceDate={date_str}&Venue={venue}&RaceNo={race_no}"
+        ckey  = f"result_{date_str}_{venue}_{race_no}"
+        html  = fetch_html(url, ckey, CACHE_TTL["race_result"])
+        if html:
+            parsed = _parse_result_html(html)
+            if parsed:
+                results[str(race_no)] = parsed
+                top3_actual = [h["no"] for h in parsed[:3]]
+                log(f"  场次 {race_no}：实际前3 = {top3_actual}")
+            else:
+                log(f"  场次 {race_no}：⚠ 解析失败")
+        else:
+            log(f"  场次 {race_no}：⚠ 抓取失败")
+
+    return results
+
+
+def _parse_result_html(html: str) -> list | None:
+    """
+    从赛果页面 HTML 中解析名次、马号、马名。
+    返回 [{"pos":1,"no":"3","name":"马名"}, ...]，按名次排序。
+    """
+    # HKJC 赛果页面特征：<td class="f_tac">名次</td>
+    # 尝试多种正则模式
+    patterns = [
+        # 模式1：典型结构 位置 马号 马名
+        r"<tr[^>]*>\s*<td[^>]*>(\d+)</td>\s*<td[^>]*>(\d+)</td>\s*<td[^>]*>([^<]+)</td>",
+        # 模式2：有 class 的 td
+        r"<td[^>]*f_tac[^>]*>(\d+)</td>[^<]*<td[^>]*>(\d+)</td>[^<]*<td[^>]*>([^<]{2,20})</td>",
+    ]
+
+    placements = []
+    for pat in patterns:
+        matches = re.findall(pat, html)
+        if matches:
+            for m in matches:
+                pos_str, no_str, name = m[0].strip(), m[1].strip(), m[2].strip()
+                try:
+                    pos = int(pos_str)
+                    no  = str(int(no_str))
+                    if 1 <= pos <= 20 and name:
+                        placements.append({"pos": pos, "no": no, "name": name})
+                except ValueError:
+                    continue
+            if placements:
+                break
+
+    if not placements:
+        return None
+
+    # 去重 + 按名次排序
+    seen = set()
+    unique = []
+    for p in sorted(placements, key=lambda x: x["pos"]):
+        if p["no"] not in seen:
+            seen.add(p["no"])
+            unique.append(p)
+
+    return unique if unique else None
+
+
+# ──────────────────────────────────────────────────────────────
+# Step 4 — 精度计算 + 自我进化分析
+# ──────────────────────────────────────────────────────────────
+
+def compare_and_evolve(prediction_archive: dict, actual_results: dict) -> dict:
+    """
+    对比预测与实际结果，计算精度指标，生成自我进化建议。
+    返回完整的回测报告字典。
+    """
+    meta    = prediction_archive.get("meta", {})
+    races   = prediction_archive.get("races", {})
+    date_str = meta.get("date", "unknown")
+
+    log(f"\n🔬 对比分析：{date_str}")
+
+    race_reports = []
+    total_top1_hits  = 0
+    total_top3_hits  = 0
+    total_races_done = 0
+
+    # 逐场对比
+    for race_no_str, pred in races.items():
+        actual = actual_results.get(race_no_str, [])
+        if not actual:
+            log(f"  场次 {race_no_str}：无实际结果，跳过")
+            continue
+
+        top3_pred   = pred.get("top3_predicted", [])
+        top3_actual = [h["no"] for h in actual[:3] if h["pos"] <= 3]
+        winner      = actual[0]["no"] if actual else None
+
+        # 命中计算
+        top1_hit  = (len(top3_pred) > 0 and str(top3_pred[0]) == str(winner))
+        top3_hits = len(set(str(p) for p in top3_pred) & set(str(a) for a in top3_actual))
+
+        total_races_done += 1
+        if top1_hit:
+            total_top1_hits += 1
+        total_top3_hits += top3_hits
+
+        # 评分偏差分析（哪些马被高估/低估）
+        scores = pred.get("scores", {})
+        overestimated = []   # 预测排名高但实际未入前3
+        underestimated = []  # 预测排名低但实际前3
+
+        if scores:
+            sorted_pred = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+            pred_ranking = {no: rank+1 for rank, (no, _) in enumerate(sorted_pred)}
+
+            for actual_h in actual[:3]:
+                no = str(actual_h["no"])
+                pred_rank = pred_ranking.get(no, 99)
+                if pred_rank > 5:
+                    underestimated.append({"no": no, "pred_rank": pred_rank, "actual_pos": actual_h["pos"]})
+
+            for no, rank in pred_ranking.items():
+                if rank <= 3 and str(no) not in [str(a["no"]) for a in actual[:3]]:
+                    overestimated.append({"no": no, "pred_rank": rank})
+
+        race_report = {
+            "race_no":       race_no_str,
+            "top3_predicted": [str(x) for x in top3_pred],
+            "top3_actual":   top3_actual,
+            "winner":        winner,
+            "top1_hit":      top1_hit,
+            "top3_hits":     top3_hits,
+            "overestimated": overestimated,
+            "underestimated": underestimated,
+        }
+        race_reports.append(race_report)
+
+        status = "✅" if top1_hit else ("🔶" if top3_hits >= 2 else "❌")
+        log(f"  场次 {race_no_str}：{status} 预测={top3_pred} 实际={top3_actual} 独赢命中={top1_hit}")
+
+    # 整体精度
+    if total_races_done == 0:
+        log("  ⚠ 无可对比场次")
+        return {}
+
+    top1_rate  = total_top1_hits  / total_races_done
+    top3_rate  = total_top3_hits  / (total_races_done * 3)
+
+    log(f"\n📈 整体精度：独赢命中率 {top1_rate:.1%}，前3命中率 {top3_rate:.1%}")
+
+    # 生成进化建议
+    evolution_suggestions = _generate_evolution_suggestions(race_reports, top1_rate, top3_rate)
+
+    backtest_report = {
+        "meta": {
+            "date":             date_str,
+            "venue":            meta.get("venue"),
+            "venue_name":       meta.get("venue_name"),
+            "total_races":      total_races_done,
+            "top1_hit_count":   total_top1_hits,
+            "top3_hit_count":   total_top3_hits,
+            "top1_rate":        round(top1_rate, 4),
+            "top3_rate":        round(top3_rate, 4),
+            "analyzed_at":      datetime.now().isoformat(),
+        },
+        "race_reports":          race_reports,
+        "evolution_suggestions": evolution_suggestions,
+    }
+
+    return backtest_report
+
+
+def _generate_evolution_suggestions(race_reports: list, top1_rate: float, top3_rate: float) -> list:
+    """
+    根据回测数据生成具体的权重/逻辑优化建议。
+    这是「自我进化」的核心 —— 不直接修改，而是输出结构化建议供用户审阅。
+    """
+    suggestions = []
+
+    # 统计系统性偏差
+    total_over  = sum(len(r["overestimated"])  for r in race_reports)
+    total_under = sum(len(r["underestimated"]) for r in race_reports)
+    total_races = len(race_reports)
+
+    # ── 建议1：高估/低估模式 ──
+    if total_over > total_races * 1.5:
+        suggestions.append({
+            "type":       "weight_adjust",
+            "priority":   "high",
+            "dimension":  "general",
+            "title":      "预测过于激进，高分马命中率偏低",
+            "detail":     (
+                f"共 {total_over} 匹马被高估（预测前3但未入前3）。"
+                "建议提高 Softmax 温度参数（当前 1.5 → 建议 2.0），"
+                "使概率分布更均匀，降低极端预测的频率。"
+            ),
+            "code_change": {
+                "file":    "analyze_race.py",
+                "param":   "SOFTMAX_TEMPERATURE",
+                "current": 1.5,
+                "proposed": 2.0,
+            }
+        })
+
+    if total_under > total_races * 1.0:
+        suggestions.append({
+            "type":       "weight_adjust",
+            "priority":   "medium",
+            "dimension":  "general",
+            "title":      "冷门马低估严重，实际前3中有多匹预测靠后的马",
+            "detail":     (
+                f"共 {total_under} 匹马被低估（实际前3但预测排名>5）。"
+                "可能原因：历史战绩权重过高，压制了当前状态较好的马。"
+                "建议：降低历史战绩中「同条件」权重 -2%（18%→16%），"
+                "提高赔率走势权重 +2%（13%→15%），更多参考市场即时信号。"
+            ),
+            "code_change": {
+                "file":    "analyze_race.py",
+                "param":   "DEFAULT_WEIGHTS",
+                "current": {"history_same_condition": 0.18, "odds_drift": 0.13},
+                "proposed": {"history_same_condition": 0.16, "odds_drift": 0.15},
+            }
+        })
+
+    # ── 建议2：整体精度阈值触发 ──
+    if top1_rate < 0.15:
+        suggestions.append({
+            "type":       "logic_review",
+            "priority":   "high",
+            "dimension":  "top1",
+            "title":      f"独赢命中率 {top1_rate:.1%} 低于基准（15%）",
+            "detail":     (
+                "独赢命中率持续低于随机基准（~1/马匹数量）。"
+                "建议检查：① 赔率数据是否为临场值（非开盘）；"
+                "② 历史战绩是否已按时间衰减加权（近期成绩权重应更高）；"
+                "③ 配速分项是否仍仅基于跑法推导（缺实测数据）。"
+            ),
+            "code_change": None,
+        })
+
+    if top3_rate < 0.30:
+        suggestions.append({
+            "type":       "weight_adjust",
+            "priority":   "medium",
+            "dimension":  "top3",
+            "title":      f"前3命中率 {top3_rate:.1%} 低于基准（33%）",
+            "detail":     (
+                "前3命中率低于理论随机基准（33%）。"
+                "当前配速评分（15%）依赖跑法推导，缺乏实测分段时间数据，"
+                "可能引入系统性噪声。建议：临时将配速权重从 15% 降至 10%，"
+                "释放的 5% 补充至历史战绩「同场地」（13%→18%），"
+                "待配速实测数据接入后再恢复。"
+            ),
+            "code_change": {
+                "file":    "analyze_race.py",
+                "param":   "DEFAULT_WEIGHTS",
+                "current": {"sectional": 0.15, "history_same_venue": 0.13},
+                "proposed": {"sectional": 0.10, "history_same_venue": 0.18},
+            }
+        })
+
+    # ── 建议3：时间衰减优化（固定建议，数据量达到阈值时触发）──
+    if total_races >= 5:
+        suggestions.append({
+            "type":       "new_feature",
+            "priority":   "medium",
+            "dimension":  "history",
+            "title":      "建议引入历史战绩时间衰减加权",
+            "detail":     (
+                "当前历史战绩对近期与6个月前成绩等权处理。"
+                "建议加入时间衰减系数：近30天×1.0，31-90天×0.8，91-180天×0.6，>180天×0.4。"
+                "预期对「近期状态好」但历史积累少的马改善评分准确性。"
+            ),
+            "code_change": {
+                "file":   "analyze_race.py",
+                "func":   "score_history()",
+                "patch":  (
+                    "在 score_history() 中对每条 hist 记录增加 time_weight：\n"
+                    "  days_ago = (today - race_date).days\n"
+                    "  if days_ago <= 30:   tw = 1.0\n"
+                    "  elif days_ago <= 90:  tw = 0.8\n"
+                    "  elif days_ago <= 180: tw = 0.6\n"
+                    "  else:                tw = 0.4\n"
+                    "  score += position_points * tw"
+                ),
+            }
+        })
+
+    # ── 建议4：样本量不足提示 ──
+    if total_races < 3:
+        suggestions.append({
+            "type":       "info",
+            "priority":   "low",
+            "dimension":  "general",
+            "title":      f"当前累计仅 {total_races} 场回测，建议积累至 10 场后再调整权重",
+            "detail":     (
+                "权重优化需要足够的样本量。单日数据可能存在偶然性。"
+                "建议观察 2-3 个赛马日（累计 20-30 场）后，再根据统计趋势调整。"
+            ),
+            "code_change": None,
+        })
+
+    return suggestions
+
+
+# ──────────────────────────────────────────────────────────────
+# Step 5 — 输出进化报告（Markdown）
+# ──────────────────────────────────────────────────────────────
+
+def write_evolution_report(backtest_report: dict) -> str:
+    """将回测报告渲染为 Markdown，保存到 .evolution/ 目录，并打印到 stdout。"""
+    if not backtest_report:
+        log("无回测数据，跳过报告生成")
+        return ""
+
+    meta        = backtest_report.get("meta", {})
+    race_reports = backtest_report.get("race_reports", [])
+    suggestions  = backtest_report.get("evolution_suggestions", [])
+
+    date_str = meta.get("date", "unknown")
+    lines = [
+        f"# 🔬 赛马预测回测报告 — {date_str} {meta.get('venue_name','')}",
+        "",
+        f"> 预测场次：{meta.get('total_races', 0)}场 | "
+        f"独赢命中：{meta.get('top1_hit_count',0)}/{meta.get('total_races',0)} "
+        f"({meta.get('top1_rate',0):.1%}) | "
+        f"前3命中（平均每场）：{meta.get('top3_rate',0):.1%}",
+        "",
+        "---",
+        "",
+        "## 📊 逐场对比",
+        "",
+        "| 场次 | 预测前3 | 实际前3 | 独赢命中 | 前3命中数 |",
+        "|------|---------|---------|---------|---------|",
+    ]
+
+    for r in race_reports:
+        top1_icon = "✅" if r["top1_hit"] else "❌"
+        lines.append(
+            f"| 第{r['race_no']}场 "
+            f"| {', '.join(r['top3_predicted'])} "
+            f"| {', '.join(r['top3_actual'])} "
+            f"| {top1_icon} "
+            f"| {r['top3_hits']}/3 |"
+        )
+
+    lines += [
+        "",
+        "---",
+        "",
+        "## 🧬 自我进化建议",
+        "",
+        "> ⚠️ 以下建议**仅供参考**，需用户确认后才能写入正式 Skill。",
+        "",
+    ]
+
+    priority_icon = {"high": "🔴", "medium": "🟡", "low": "🟢", "info": "ℹ️"}
+
+    for i, sug in enumerate(suggestions, 1):
+        icon = priority_icon.get(sug.get("priority", "low"), "•")
+        lines += [
+            f"### {icon} 建议 {i}：{sug['title']}",
+            "",
+            f"**类型**：{sug.get('type','—')}  |  **维度**：{sug.get('dimension','—')}  |  **优先级**：{sug.get('priority','—')}",
+            "",
+            sug.get("detail", ""),
+            "",
+        ]
+        cc = sug.get("code_change")
+        if cc:
+            lines += [
+                "**具体改动**：",
+                "",
+                f"```python",
+                f"# 文件：{cc.get('file','')}"
+            ]
+            if "param" in cc:
+                lines.append(f"# 参数：{cc['param']}")
+                lines.append(f"# 当前值：{cc.get('current')}")
+                lines.append(f"# 建议值：{cc.get('proposed')}")
+            elif "patch" in cc:
+                lines.append(cc["patch"])
+            lines += ["```", ""]
+
+    lines += [
+        "---",
+        "",
+        f"*报告生成时间：{meta.get('analyzed_at', datetime.now().isoformat())}*",
+        "",
+        "> 如需将某条建议应用到 Skill，请回复：「应用建议 N」",
+        "",
+    ]
+
+    report_text = "\n".join(lines)
+
+    # 保存文件
+    safe_date = date_str.replace("/", "-")
+    report_file = os.path.join(EVOLUTION_DIR, f"evolution_{safe_date}_{meta.get('venue','')}.md")
+    with open(report_file, "w", encoding="utf-8") as f:
+        f.write(report_text)
+
+    log(f"\n📝 进化报告已保存：{report_file}")
+    print("\n" + "=" * 60)
+    print(report_text)
+    print("=" * 60)
+
+    return report_file
+
+
+# ──────────────────────────────────────────────────────────────
+# 工具函数
+# ──────────────────────────────────────────────────────────────
+
+def _archive_path(date_str: str, venue: str, suffix: str) -> str:
+    safe_date = date_str.replace("/", "-")
+    return os.path.join(ARCHIVE_DIR, f"{safe_date}_{venue}_{suffix}.json")
+
+
+def load_prediction_archive(date_str: str, venue: str) -> dict | None:
+    """加载指定日期的预测存档。"""
+    p = _archive_path(date_str, venue, "prediction")
+    if os.path.exists(p):
+        with open(p, encoding="utf-8") as f:
+            return json.load(f)
+    return None
+
+
+# ──────────────────────────────────────────────────────────────
+# 主流程
+# ──────────────────────────────────────────────────────────────
+
+def main():
+    parser = argparse.ArgumentParser(description="赛马每日自动调度")
+    parser.add_argument(
+        "--mode",
+        choices=["predict", "backtest", "auto"],
+        default="auto",
+        help=(
+            "predict  = 预测明天的赛事（在赛马日前一天运行）\n"
+            "backtest = 回测今天的赛事结果（在赛马日赛后运行）\n"
+            "auto     = 自动判断当前时间决定运行哪个模式"
+        )
+    )
+    parser.add_argument("--date", help="指定日期 YYYY/MM/DD（默认自动推断）")
+    args = parser.parse_args()
+
+    now  = datetime.now()
+    mode = args.mode
+
+    if mode == "auto":
+        # 下午 12 点前：检测今天是否赛马日，若是则准备回测（赛事已于前晚结束）
+        # 下午 12-20 点：检测明天是否赛马日，若是则预测
+        # 晚上 20 点后：检测今天是否赛马日，若是则运行回测
+        hour = now.hour
+        if hour < 12:
+            mode = "backtest"
+        elif hour < 20:
+            mode = "predict"
+        else:
+            mode = "backtest"
+        log(f"⏱ 当前时间 {now.strftime('%H:%M')}，自动模式 → {mode}")
+
+    if mode == "predict":
+        # 检测明天是否赛马日
+        if args.date:
+            target_date = args.date
+        else:
+            tomorrow = now + timedelta(days=1)
+            target_date = tomorrow.strftime("%Y/%m/%d")
+
+        race_info = detect_race_day(target_date)
+        if race_info:
+            run_batch_predictions(race_info)
+        else:
+            log(f"明天（{target_date}）不是赛马日，无需预测。结束。")
+
+    elif mode == "backtest":
+        # 检测今天/昨天是否有预测存档 + 实际赛果
+        if args.date:
+            target_date = args.date
+        else:
+            # 先试今天，再试昨天
+            today_str = now.strftime("%Y/%m/%d")
+            yesterday_str = (now - timedelta(days=1)).strftime("%Y/%m/%d")
+
+            # 检测今天是否赛马日（先看是否有存档）
+            race_info = None
+            archive   = load_prediction_archive(today_str, "ST") or load_prediction_archive(today_str, "HV")
+
+            if archive:
+                target_date = today_str
+                race_info   = archive["meta"]
+            else:
+                archive = load_prediction_archive(yesterday_str, "ST") or load_prediction_archive(yesterday_str, "HV")
+                if archive:
+                    target_date = yesterday_str
+                    race_info   = archive["meta"]
+                else:
+                    log("未找到预测存档，跳过回测。（可能今天/昨天均非赛马日）")
+                    return
+
+        if not race_info:
+            race_info = detect_race_day(target_date)
+            if not race_info:
+                log(f"{target_date} 不是赛马日，无法回测。")
+                return
+
+        if not archive:
+            archive = load_prediction_archive(target_date, race_info.get("venue", "ST"))
+            if not archive:
+                log(f"未找到 {target_date} 的预测存档，无法回测（可能当天未运行预测模式）。")
+                return
+
+        actual_results = fetch_actual_results(race_info)
+        if not actual_results:
+            log("未能获取实际赛果，可能赛事尚未结束或网页结构变化。")
+            return
+
+        backtest_report = compare_and_evolve(archive, actual_results)
+
+        # 保存回测报告 JSON
+        report_file = _archive_path(target_date, race_info.get("venue","ST"), "backtest")
+        with open(report_file, "w", encoding="utf-8") as f:
+            json.dump(backtest_report, f, ensure_ascii=False, indent=2)
+
+        # 输出 Markdown 进化报告
+        write_evolution_report(backtest_report)
+
+
+if __name__ == "__main__":
+    main()
