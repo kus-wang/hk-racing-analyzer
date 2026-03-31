@@ -18,7 +18,7 @@
 | 磁盘缓存机制，避免重复请求 | Disk caching to avoid redundant network requests |
 | 每日自动化：赛前预测 + 赛后回测 | Daily automation: pre-race predictions + post-race backtesting |
 | 自我进化引擎：根据回测结果迭代优化 | Self-evolution engine: iterative optimization based on backtesting |
-| 中英双语完整支持 | Full bilingual support (Chinese & English) |
+| HKJC 官方贴士指数参考 | HKJC official Tips Index as core signal |
 
 ---
 
@@ -40,9 +40,12 @@
 | 练马师胜率 / Trainer Win Rate | 马匹历史战绩（动态统计）/ Dynamic from history | 练马师带本马历史胜率/前3率 / This trainer's record with this horse | 4% |
 | 档位分析 / Barrier Analysis | 历史统计 / Historical Stats | 同距离不同档位胜率 / Win rate by barrier at same distance | 5% |
 | 场地偏好 / Track Preference | 马匹档案 / Horse Profile | 草地/泥地、好地/快地表现 / Turf/Dirt, Good/Fast track performance | — |
-| 专家预测 / Expert Predictions | 网络搜索 / Web Search | 马评人共识度参考 / Expert consensus as supplementary reference | 6% |
+| HKJC 贴士指数 / Tips Index | HKJC 官方贴士页面 / Official Tips Index | 市场共识信号，高于外部专家 / Market consensus signal, higher than external experts | 6% |
+| 外部专家预测 / Expert Predictions | 网络搜索 / Web Search | 马评人共识度参考 / Expert consensus as supplementary reference | 4% |
 
-> 📊 当前默认总权重分配：历史战绩 31% · 赔率 25% · 配速 15% · 骑师 5% · 练马师 4% · 档位 5% · 专家 6% · 跑法×场地 9%
+> 📊 当前默认总权重分配：历史战绩 31% · 赔率 28% · 配速 15% · 骑师 5% · 练马师 4% · 档位 5% · 贴士指数 6% · 专家 4%
+>
+> Current default weights: history 31% · odds 28% · pace 15% · jockey 5% · trainer 4% · barrier 5% · tips index 6% · expert 4%
 >
 > Current default weights: history 31% · odds 25% · pace 15% · jockey 5% · trainer 4% · barrier 5% · expert 6% · running style×track 9%
 
@@ -181,7 +184,7 @@ hk-racing-analyzer/
 ## 📝 更新日志 / Changelog
 
 ### v1.4.0 — 2026-03-31
-- 🏗️ **重构：模块化拆分**：`analyze_race.py`（1778行/54KB）拆分为 9 个独立模块（`config.py` / `weights.py` / `probability.py` / `scoring.py` / `cache.py` / `fetch.py` / `parse.py` / `analyze.py` / `output.py` / `main.py`）
+- 🏗️ **重构：模块化拆分**：`analyze_race.py` 拆分为 10 个独立模块（`config.py` / `weights.py` / `probability.py` / `scoring.py` / `cache.py` / `fetch.py` / `parse.py` / `analyze.py` / `output.py` / `main.py`）
 - ✅ `analyze_race.py` 保留为向后兼容入口层，CLI 用法完全不变
 - ✅ 每个模块职责单一，便于测试、维护和独立 import
 - 🔧 `config.py` 新增 `tips_index` 缓存类型（30分钟TTL）；`cache.py` 优化贴士指数URL识别
