@@ -259,10 +259,49 @@ python scripts/apply_evolution.py --rollback
 ## Resources
 
 ### scripts/
-- `analyze_race.py` — Main analysis script: data fetch, history parsing, multi-dimensional scoring, report output
-- `daily_scheduler.py` — Daily automation: race day detection, batch prediction, post-race backtest, evolution report generation
-- `apply_evolution.py` — Evolution applicator: safely applies user-confirmed suggestions to `analyze_race.py` (with backup/rollback)
-- `dump_race.py` — Debug utility: dumps raw cached race data to stdout
+
+#### Main Program Modules (v1.4.0 Refactored)
+
+| File | Lines | Responsibility |
+|:-----|:-----:|:---------------|
+| `main.py` | ~200 | CLI parsing, main workflow orchestration |
+| `analyze.py` | ~140 | Single horse multi-dimensional scoring |
+| `scoring.py` | ~470 | All scoring functions (history/odds/pace/jockey/expert) |
+| `fetch.py` | ~340 | HTTP requests, Playwright dynamic loading, horse history/tips index |
+| `parse.py` | ~330 | Race card & horse history HTML parsing |
+| `cache.py` | ~150 | Disk cache read/write, TTL expiry, stats cleanup |
+| `output.py` | ~110 | Markdown report formatting |
+| `config.py` | ~80 | URL constants, cache TTL, default weights, venue/condition mapping |
+| `weights.py` | ~70 | Scenario/venue/distance-adaptive dynamic weight calculation |
+| `probability.py` | ~40 | Softmax normalized probability calculation |
+| `analyze_race.py` | ~27 | **Entry compatibility layer** (directly calls main.py, CLI usage unchanged) |
+
+> **Backward Compatibility**: `analyze_race.py` is preserved as an entry compatibility layer. All existing CLI usage remains unchanged.
+
+#### Automation Scripts
+
+- `daily_scheduler.py` - Daily automation: race day detection, batch prediction, post-race backtest, evolution report generation
+- `apply_evolution.py` - Evolution applicator: safely applies user-confirmed suggestions to code (with backup/rollback)
+- `dump_race.py` - Debug utility: dumps raw cached race data to stdout
+
+#### CLI Usage (Entry: `python scripts/analyze_race.py`)
+
+```bash
+# Analyze Sha Tin race 3 today (auto-uses cache, fast return on 2nd run)
+python scripts/analyze_race.py --venue ST --race 3
+
+# Analyze specific date, Happy Valley race 5
+python scripts/analyze_race.py --date 2026/03/30 --venue HV --race 5
+
+# Force refresh: ignore cache, re-fetch all data (use ~30 min before post)
+python scripts/analyze_race.py --venue ST --race 3 --force-refresh
+
+# Clear cache for this race then re-analyze
+python scripts/analyze_race.py --venue ST --race 3 --clear-cache
+
+# Show cache statistics (file count / total size / oldest entry)
+python scripts/analyze_race.py --cache-stats
+```
 
 ### references/
 - `hkjc_urls.md` — HKJC URL reference (including jockey/trainer profile pages)

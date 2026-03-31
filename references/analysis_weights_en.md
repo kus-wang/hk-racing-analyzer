@@ -1,5 +1,25 @@
 # Analysis Dimension Weight Configuration
 
+## Module Architecture (v1.4.0 Refactored)
+
+> Original `analyze_race.py` (~600 lines) has been split into 11 independent modules for clear responsibilities, maintainability, and testability.
+
+| Module | Lines | Responsibility |
+|:-------|:-----:|:---------------|
+| `main.py` | ~200 | CLI parsing, main workflow orchestration |
+| `analyze.py` | ~140 | Single horse multi-dimensional scoring |
+| `scoring.py` | ~470 | All scoring functions (history/odds/pace/jockey/expert) |
+| `fetch.py` | ~340 | HTTP requests, Playwright dynamic loading, horse history/tips index |
+| `parse.py` | ~330 | Race card & horse history HTML parsing |
+| `cache.py` | ~150 | Disk cache read/write, TTL expiry, stats cleanup |
+| `output.py` | ~110 | Markdown report formatting |
+| `config.py` | ~80 | URL constants, cache TTL, default weights, venue/condition mapping |
+| `weights.py` | ~70 | Scenario/venue/distance-adaptive dynamic weight calculation |
+| `probability.py` | ~40 | Softmax normalized probability calculation |
+| `analyze_race.py` | ~27 | **Entry compatibility layer** (directly calls main.py, CLI usage unchanged) |
+
+---
+
 ## Current Weight Settings
 
 > Historical performance is split into 3 sub-dimensions; Odds is split into absolute value and drift. Total remains 100%.
@@ -282,4 +302,6 @@ Flag a horse as "Longshot Alert" if ALL of the following are met:
 
 | Date | Changes |
 |------|---------|
+| 2026-04-01 | **v1.4.0 Modular Refactoring**: analyze_race.py (~600 lines) split into 11 independent modules (main/analyze/scoring/fetch/parse/cache/output/config/weights/probability), entry compatibility layer preserved with unchanged CLI |
+| 2026-03-30 | Dynamic jockey/trainer scoring: weights reduced from 8%/7% to 5%/4% (secondary factors), fixed 50-score replaced with history-based dynamic statistics; released 6% added to historical performance (same-condition +3%→18%, same-venue +3%→13%); added jockey/trainer scoring criteria documentation |
 | 2026-03-30 | Initial weight optimization: historical performance split into 3 sub-dimensions; odds split into absolute value + drift; sectional timing replaced with quantitative pace index from actual split times; probability calculation switched to Softmax + cap; added scenario-adaptive weights, data confidence rating, and longshot alert criteria |

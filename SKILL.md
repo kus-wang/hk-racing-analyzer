@@ -235,10 +235,49 @@ python scripts/analyze_race.py --cache-stats
 ## Resources
 
 ### scripts/
-- `analyze_race.py` - 主分析脚本，集成数据抓取、历史解析、多维度评分、报告输出全流程
+
+#### 主程序模块（v1.4.0 重构后）
+
+| 文件 | 行数 | 职责 |
+|:-----|:----:|:-----|
+| `main.py` | ~200 | CLI 解析、主流程编排 |
+| `analyze.py` | ~140 | 单匹马多维度综合评分 |
+| `scoring.py` | ~470 | 所有评分函数（历史/赔率/配速/骑师/贴士等）|
+| `fetch.py` | ~340 | HTTP请求、Playwright动态加载、马匹历史/贴士指数 |
+| `parse.py` | ~330 | 排位表、马匹历史战绩HTML解析 |
+| `cache.py` | ~150 | 磁盘缓存读写、TTL过期、统计清理 |
+| `output.py` | ~110 | Markdown报告格式化 |
+| `config.py` | ~80 | URL常量、缓存TTL、权重默认值、场地/状况映射 |
+| `weights.py` | ~70 | 场景/场地/距离适配的动态权重计算 |
+| `probability.py` | ~40 | Softmax归一化概率计算 |
+| `analyze_race.py` | ~27 | **入口兼容层**（直接调用 main.py，CLI用法不变）|
+
+> **向后兼容**：`analyze_race.py` 保留为入口兼容层，所有现有 CLI 用法完全不变。
+
+#### 自动化脚本
+
 - `daily_scheduler.py` - 每日自动化调度：赛马日检测、批量预测、赛后回测、进化建议生成
-- `apply_evolution.py` - 进化建议应用工具：用户确认后安全应用到 analyze_race.py（含备份/回滚）
+- `apply_evolution.py` - 进化建议应用工具：用户确认后安全应用到代码（含备份/回滚）
 - `dump_race.py` - 调试工具：转储缓存中的原始赛事数据
+
+#### CLI 用法（入口：`python scripts/analyze_race.py`）
+
+```bash
+# 分析今天沙田第3场（自动使用缓存，第二次运行极速返回）
+python scripts/analyze_race.py --venue ST --race 3
+
+# 分析指定日期跑马地第5场
+python scripts/analyze_race.py --date 2026/03/30 --venue HV --race 5
+
+# 强制刷新：忽略缓存重新抓取所有数据（临场赔率更新时使用）
+python scripts/analyze_race.py --venue ST --race 3 --force-refresh
+
+# 清除当前场次缓存后重新分析
+python scripts/analyze_race.py --venue ST --race 3 --clear-cache
+
+# 查看缓存统计（文件数 / 总大小 / 最旧条目）
+python scripts/analyze_race.py --cache-stats
+```
 
 ### references/
 - `hkjc_urls.md` - HKJC 网站 URL 参考（含骑师/练马师档案页）

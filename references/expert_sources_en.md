@@ -7,6 +7,20 @@
 |--------|-----|-------------|
 | Hong Kong Jockey Club | racing.hkjc.com | Official data and tips |
 | HKJC YouTube | youtube.com/@hkjc | Race highlights and analysis |
+| **HKJC Tips Index** | racing.hkjc.com/racing/chinese/tipsindex/tips_index.asp | **Official daily tips index (6% weight)** |
+
+#### HKJC Tips Index Description
+- **Data Source**: Official HKJC website daily published tips index
+- **Index Range**: Usually 80-120, 100 as baseline
+  - > 100: Market favors (well-regarded)
+  - < 100: Market dislikes (underestimated)
+- **Weight Setting**: **6%** (higher than external expert predictions at 4%)
+- **Scoring Rules**:
+  - Index 100 → Score 50 (neutral)
+  - Every 5 points deviation → Score ±10
+  - No data → Default 50
+
+> ⚠️ **v1.4.0 Update**: Tips index URL upgraded from standalone fetch in fetch.py to config.py constants, unified call in fetch.py. Weight adapts in newcomer/class_down scenarios (see `references/analysis_weights_en.md` scenario weights section).
 
 ### Racing Newspapers
 | Source | URL | Description |

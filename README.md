@@ -170,6 +170,12 @@ hk-racing-analyzer/
 
 ## 📝 更新日志 / Changelog
 
+### v1.4.0 — 2026-03-31
+- 🏗️ **重构：模块化拆分**：`analyze_race.py`（1778行/54KB）拆分为 9 个独立模块（`config.py` / `weights.py` / `probability.py` / `scoring.py` / `cache.py` / `fetch.py` / `parse.py` / `analyze.py` / `output.py` / `main.py`）
+- ✅ `analyze_race.py` 保留为向后兼容入口层，CLI 用法完全不变
+- ✅ 每个模块职责单一，便于测试、维护和独立 import
+- 🔧 `config.py` 新增 `tips_index` 缓存类型（30分钟TTL）；`cache.py` 优化贴士指数URL识别
+
 ### v1.3.1 — 2026-03-31
 - 🐛 **修复排序键字段名错误**：`final_score` → `total_score`（预测结果不再固定为 [1,2,3]）
 - 🐛 **修复后备马混入 + 马名提取失败**：TR 正则精确匹配 + 链接提取改用 `[^>]*>` 绕过 onclick 干扰
