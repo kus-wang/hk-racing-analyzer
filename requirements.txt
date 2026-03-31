@@ -1,0 +1,14 @@
+# HKJC 赛马分析器 · 依赖清单
+# hk-racing-analyzer · Dependency list
+
+# ─── 核心依赖 ───
+requests==2.32.3
+beautifulsoup4==4.12.3
+lxml==5.3.0
+
+# ─── 动态页面抓取 ───
+playwright==1.48.0
+# 安装浏览器驱动：playwright install chromium
+
+# ─── 数据分析（标准库，无需安装）────
+# json, re, math, datetime, collections, hashlib, io, glob, shutil, subprocess, sys, time, argparse, os, urllib

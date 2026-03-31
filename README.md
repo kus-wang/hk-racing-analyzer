@@ -46,8 +46,6 @@
 > 📊 当前默认总权重分配：历史战绩 31% · 赔率 28% · 配速 15% · 骑师 5% · 练马师 4% · 档位 5% · 贴士指数 6% · 专家 4%
 >
 > Current default weights: history 31% · odds 28% · pace 15% · jockey 5% · trainer 4% · barrier 5% · tips index 6% · expert 4%
->
-> Current default weights: history 31% · odds 25% · pace 15% · jockey 5% · trainer 4% · barrier 5% · expert 6% · running style×track 9%
 
 ---
 
@@ -57,11 +55,13 @@
 
 - Python 3.10+
 - `requests`, `beautifulsoup4`, `lxml`
+- `playwright`（用于动态 JS 渲染页面的数据抓取）
 - OpenClaw + SkillHub（AI Agent 运行时环境）
 
 ```bash
 # 安装依赖 / Install dependencies
-pip install requests beautifulsoup4 lxml
+pip install requests beautifulsoup4 lxml playwright
+playwright install chromium  # 安装 Chromium 浏览器驱动
 
 # 分析今天沙田第3场 / Analyze Sha Tin Race 3 today
 python scripts/analyze_race.py --venue ST --race 3
