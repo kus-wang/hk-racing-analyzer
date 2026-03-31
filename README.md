@@ -118,10 +118,20 @@ hk-racing-analyzer/
 ├── README.md                     # 本文件 / This file
 ├── RELEASE_NOTES.md              # 更新日志 / Release notes
 ├── scripts/
-│   ├── analyze_race.py           # 主分析脚本 / Main analysis script
-│   ├── daily_scheduler.py        # 每日自动化调度 / Daily automation scheduler
-│   ├── apply_evolution.py        # 进化建议应用工具 / Evolution apply tool
-│   └── dump_race.py             # 缓存数据转储（调试）/ Cache dump (debug)
+│   ├── analyze_race.py            # 主分析脚本（向后兼容入口层）/ Main entry point (backward compatible)
+│   ├── daily_scheduler.py         # 每日自动化调度 / Daily automation scheduler
+│   ├── apply_evolution.py         # 进化建议应用工具 / Evolution apply tool
+│   ├── dump_race.py              # 缓存数据转储（调试）/ Cache dump (debug)
+│   ├── main.py                    # CLI 主入口（模块化重构后）/ CLI main entry
+│   ├── config.py                  # 配置常量与参数 / Configuration constants
+│   ├── weights.py                 # 权重加载与场景自适应 / Weight loading & scenario adaptation
+│   ├── probability.py             # Softmax 概率归一化 / Softmax probability normalization
+│   ├── scoring.py                 # 各维度评分引擎 / Per-dimension scoring engine
+│   ├── cache.py                    # 磁盘缓存管理 / Disk cache management
+│   ├── fetch.py                   # HKJC 数据抓取 / HKJC data fetching
+│   ├── parse.py                   # HTML 解析与数据提取 / HTML parsing & extraction
+│   ├── analyze.py                 # 综合分析与评分汇总 / Analysis & score aggregation
+│   └── output.py                  # 报告输出与格式化 / Report generation & formatting
 ├── references/
 │   ├── hkjc_urls.md              # HKJC URL 参考 / HKJC URL reference
 │   ├── analysis_weights.md       # 各维度权重配置 / Weight configuration
