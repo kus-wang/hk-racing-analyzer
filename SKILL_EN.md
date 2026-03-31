@@ -31,6 +31,7 @@ Data-driven horse racing prediction tool combining historical data analysis with
 
 | Dimension | Data Source | Analysis Points | Weight |
 |-----------|-------------|-----------------|--------|
+| **HKJC Tips Index** | HKJC Official Tips Index Page | Official daily tips (>100 hot, <100 cold) | **6%** |
 | Jockey | Horse history (dynamic) | Win/top-3 rate of this jockey on this horse | **5%** |
 | Trainer | Horse history (dynamic) | Win/top-3 rate of this trainer with this horse | **4%** |
 | Barrier | Historical stats | Barrier win rate at same distance (ST/HV) | **5%** |
