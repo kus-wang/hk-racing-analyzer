@@ -251,9 +251,15 @@ def _run_single_prediction(script_path: str, date_str: str, venue: str, race_no:
         if not output:
             return None
 
+        # analyze_race.py 的 --output json 模式会在 JSON 前后混入日志行
+        # 需要从输出中提取 JSON 块（以 { 开头，以 } 结尾的最大块）
+        json_str = _extract_json_block(output)
+        if not json_str:
+            log(f"     ⚠ 未找到 JSON 块")
+            return _fallback_parse_output(output)
+
         # 尝试解析 JSON 输出
-        # analyze_race.py 在 --output json 模式下输出完整 JSON
-        data = json.loads(output)
+        data = json.loads(json_str)
 
         # 提取前3预测（按 final_score 降序的前3个马号）
         horses = data.get("horses", [])
@@ -283,6 +289,35 @@ def _run_single_prediction(script_path: str, date_str: str, venue: str, race_no:
     except Exception as e:
         log(f"     ⚠ 异常：{e}")
         return None
+
+
+def _extract_json_block(text: str) -> str | None:
+    """
+    从混合输出（日志 + JSON）中提取最大的 JSON 对象块。
+    查找第一个 '{' 到最后一个 '}' 之间的内容。
+    """
+    start = text.find('{')
+    end   = text.rfind('}')
+    if start == -1 or end == -1 or end <= start:
+        return None
+    candidate = text[start:end+1]
+    # 验证是合法 JSON
+    try:
+        json.loads(candidate)
+        return candidate
+    except json.JSONDecodeError:
+        # 逐行尝试找到合法 JSON 段
+        lines = text.splitlines()
+        for i, line in enumerate(lines):
+            if line.strip().startswith('{'):
+                for j in range(len(lines), i, -1):
+                    block = "\n".join(lines[i:j])
+                    try:
+                        json.loads(block)
+                        return block
+                    except json.JSONDecodeError:
+                        continue
+    return None
 
 
 def _fallback_parse_output(text: str) -> dict | None:

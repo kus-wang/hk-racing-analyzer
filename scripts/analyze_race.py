@@ -26,9 +26,9 @@ from urllib.error import URLError, HTTPError
 from urllib.parse import quote
 
 # HKJC 网站 URL 模板
-HKJC_BASE = "https://racing.hkjc.com"
-RACE_INFO_URL = HKJC_BASE + "/racing/information/Chinese/Racing/LocalResults.aspx"
-HORSE_URL = HKJC_BASE + "/zh-hk/local/information/horse?HorseNo="
+HKJC_BASE      = "https://racing.hkjc.com"
+RACE_CARD_URL  = HKJC_BASE + "/zh-hk/local/information/racecard"
+HORSE_URL      = HKJC_BASE + "/zh-hk/local/information/horse?HorseNo="
 
 # ==============================================================================
 # 缓存配置
@@ -973,81 +973,83 @@ def fetch_horse_history(horse_id: str, force_refresh: bool = False) -> dict:
 
 def parse_race_entries(html, race_no=None):
     """
-    从 HKJC LocalResults 页面 HTML 解析参赛马匹信息。
+    从 HKJC 排位表 (RaceCard) 页面 HTML 解析参赛马匹信息。
 
-    页面结构要点：
-    - URL 已带 RaceNo=N，所以页面只含单场数据
-    - 排位表位于「馬號」表头之后的第一个 <tbody class="f_fs12 fontFam">
-    - 每匹马一个 <tr>，td 列顺序：
-        [0]排名 [1]马号 [2]马名链接 [3]骑师 [4]练马师
-        [5]负磅 [6]体重 [7]档位 [8]头马距离 [9]走位 [10]时间 [11]赔率
-    - 页面下方的"往绩"区域也含 horseid，因此必须只解析排位表 tbody
+    页面结构（zh-hk/local/information/racecard）：
+    - 每匹马一行 <tr class="f_fs11">，包含 horseid= 链接
+    - td 列顺序（27列）：
+        [0]马号  [1]班次  [2](空)  [3]马名  [4]烙号
+        [5]负磅  [6]骑师  [7](空)  [8]档位  [9]练马师
+        [10]?   [11]评分  [12]评分变化  ...
+        [18]性别 [19]总奖金 ...
     """
     horses = []
 
-    # ── 定位排位表 tbody（「馬號」表头后第一个 f_fs12 fontFam tbody）──
-    header_idx = html.find('馬號')
-    if header_idx == -1:
-        return horses
-    tbody_start = html.find('f_fs12 fontFam', header_idx)
-    if tbody_start == -1:
-        return horses
-    # 找到该 tbody 的开头 <tbody ...>
-    tbody_tag_start = html.rfind('<tbody', 0, tbody_start + 20)
-    tbody_end = html.find('</tbody>', tbody_tag_start)
-    if tbody_end == -1:
-        return horses
-    tbody_html = html[tbody_tag_start: tbody_end + len('</tbody>')]
-
-    # ── 逐行解析 <tr> ────────────────────────────────────────
-    tr_pattern = re.compile(r'<tr[^>]*>(.*?)</tr>', re.DOTALL | re.IGNORECASE)
+    # 定位所有含 horseid 的 tr 行（排位表用 class="f_fs11"）
+    tr_pattern = re.compile(
+        r'<tr[^>]*class="[^"]*f_fs\d+[^"]*"[^>]*>(.*?)</tr>',
+        re.DOTALL | re.IGNORECASE
+    )
     td_pattern = re.compile(r'<td[^>]*>(.*?)</td>', re.DOTALL | re.IGNORECASE)
 
-    for tr_m in tr_pattern.finditer(tbody_html):
+    for tr_m in tr_pattern.finditer(html):
         tr_content = tr_m.group(1)
-        if 'horseid=' not in tr_content:
+        if 'horseid=' not in tr_content.lower():
             continue
 
         # 提取 horseid 和马名
-        horse_link = re.search(r'horseid=([A-Za-z0-9_]+)[^"]*"[^>]*>([^<]+)</a>', tr_content)
+        horse_link = re.search(r'horseid=([A-Za-z0-9_]+)', tr_content, re.IGNORECASE)
+        name_link  = re.search(r'href="/zh-hk/local/information/horse\?horseid=[^"]+[^>]*>([^<]+)</a>', tr_content)
         if not horse_link:
             continue
         horse_id   = horse_link.group(1).strip()
-        horse_name = re.sub(r'&nbsp;.*', '', horse_link.group(2)).strip()
+        horse_name = name_link.group(1).strip() if name_link else ""
 
-        # 提取骑师
-        jockey_m = re.search(r'jockeyid=[^"]+[^>]+>([^<]+)</a>', tr_content)
-        jockey = jockey_m.group(1).strip() if jockey_m else ""
+        # 提取骑师 (jockeyid=)
+        jockey_m = re.search(r'jockeyid=([A-Za-z0-9_]+)', tr_content, re.IGNORECASE)
+        if jockey_m:
+            jockey_text = re.search(
+                r'jockeyid=' + jockey_m.group(1) + r'[^>]*>([^<]+)</a>',
+                tr_content
+            )
+            jockey = jockey_text.group(1).strip() if jockey_text else ""
+        else:
+            jockey = ""
 
-        # 提取练马师
-        trainer_m = re.search(r'trainerid=[^"]+[^>]+>([^<]+)</a>', tr_content)
-        trainer = trainer_m.group(1).strip() if trainer_m else ""
+        # 提取练马师 (trainerid=)
+        trainer_m = re.search(r'trainerid=([A-Za-z0-9_]+)', tr_content, re.IGNORECASE)
+        if trainer_m:
+            trainer_text = re.search(
+                r'trainerid=' + trainer_m.group(1) + r'[^>]*>([^<]+)</a>',
+                tr_content
+            )
+            trainer = trainer_text.group(1).strip() if trainer_text else ""
+        else:
+            trainer = ""
 
-        # 解析所有 td（去掉子标签后的纯文本，保留空白 td 以维持列索引）
+        # 解析所有 td 纯文本，维持列索引
         tds_raw = [td_m.group(1) for td_m in td_pattern.finditer(tr_content)]
         tds = [re.sub(r'<[^>]+>', ' ', td).strip() for td in tds_raw]
 
         def get_td(idx, default=""):
             return tds[idx] if idx < len(tds) else default
 
-        # td[1] = 马号，td[7] = 档位，td[11] = 赔率
+        # TD[0]=马号，TD[8]=档位，TD[5]=负磅（排位表无赔率）
         try:
-            horse_no = int(get_td(1, "0").split()[0])
+            horse_no = int(get_td(0, "0").strip())
         except (ValueError, IndexError):
             horse_no = len(horses) + 1
 
         try:
-            barrier = int(get_td(7, "0").split()[0])
+            barrier = int(get_td(8, "0").strip())
         except (ValueError, IndexError):
             barrier = 0
 
-        # 赔率：优先 td[11]，若无则取最后一个纯小数 td
-        odds_str = get_td(11, "")
+        # 负磅
         try:
-            final_odds = float(odds_str.split()[0]) if odds_str else None
+            weight = float(get_td(5, "0").replace(",", ""))
         except (ValueError, IndexError):
-            odds_candidates = re.findall(r'<td[^>]*>\s*([\d]+\.[\d]+)\s*</td>', tr_content)
-            final_odds = float(odds_candidates[-1]) if odds_candidates else None
+            weight = 0
 
         horses.append({
             "id":      horse_id,
@@ -1056,10 +1058,11 @@ def parse_race_entries(html, race_no=None):
             "barrier": barrier,
             "jockey":  jockey,
             "trainer": trainer,
-            "final_odds":   final_odds,
-            "opening_odds": None,   # LocalResults 页不含开盘赔率，需单独获取
-            "history":      [],
-            "current_rating": 40,
+            "weight":  weight,
+            "final_odds":   None,   # 排位表无赔率，赛后补充
+            "opening_odds": None,
+            "history":         [],
+            "current_rating":  40,
             # 各维度评分（默认 50 = 数据缺失中性值）
             "history_same_condition_score": 40,
             "history_same_venue_score":     40,
@@ -1316,9 +1319,10 @@ def main():
     print(f"📐 权重配置: {json.dumps({k: round(v, 3) for k, v in weights.items()}, ensure_ascii=False)}")
 
     # 获取赛事数据（带缓存）
+    # 排位表 URL 格式：racedate=YYYY/MM/DD&Racecourse=ST&RaceNo=N
     url = (
-        f"{RACE_INFO_URL}"
-        f"?RaceDate={quote(race_date)}&Venue={venue}&RaceNo={race_no}"
+        f"{RACE_CARD_URL}"
+        f"?racedate={quote(race_date)}&Racecourse={venue}&RaceNo={race_no}"
     )
     html = fetch_url(url, force_refresh=force_refresh)
 
