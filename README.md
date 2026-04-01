@@ -4,7 +4,6 @@
 >
 > 港马数据驱动预测工具，基于历史战绩、赔率走势、配速分段、骑练数据、专家共识等多维数据，提供前3名概率预测与投注建议。
 
-[[Badge Placeholders - to be added after review]]
 
 ---
 
