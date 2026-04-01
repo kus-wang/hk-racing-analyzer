@@ -1,9 +1,5 @@
 # 🏇 香港赛马分析器 / HK Racing Analyzer
 
-<p align="center">
-  <img src="assets/logo.svg" alt="HK Racing Analyzer" width="300">
-</p>
-
 > Data-driven horse racing prediction tool for HKJC races — delivering top-3 probability distribution and betting recommendations.
 >
 > 港马数据驱动预测工具，基于历史战绩、赔率走势、配速分段、骑练数据、专家共识等多维数据，提供前3名概率预测与投注建议。
