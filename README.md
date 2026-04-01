@@ -183,6 +183,24 @@ hk-racing-analyzer/
 
 ## 📝 更新日志 / Changelog
 
+### v1.4.2 — 2026-04-01
+
+#### 🕐 定时任务调整：回测时间改为 23:30 / Task Timing Adjustment: Backtest Changed to 23:30
+- 原 `09-00` 自动化任务在早上 9:00 运行回测，但此时沙田日间赛尚未开始（约 13:00 开跑），无法抓取赛果
+- Original `09-00` automation runs backtest at 9:00 AM, but Sha Tin daytime races start around 13:00 — results not yet available
+- 任务 ID 保留 `09-00`，名称改为「赛马回测+进化分析 — 每日23:30」
+- Task ID unchanged, renamed to "赛马回测+进化分析 — 每日23:30"
+- 执行时间：每天 **23:30**（原 09:00），覆盖沙田日间赛、黄昏赛、跑马地夜赛
+- Runs daily at **23:30** (was 09:00), covers Sha Tin day/evening races and Happy Valley night races
+
+#### 📦 新增：预测存档归档隔离机制 / New: Prediction Archive Isolation
+- 新增 `COMPLETED_DIR = .archive/completed/` 目录
+- Added `COMPLETED_DIR = .archive/completed/` directory
+- 回测完成后，预测存档自动从 `.archive/` 移至 `.archive/completed/`
+- After backtest, prediction archive automatically moves from `.archive/` to `.archive/completed/`
+- `load_prediction_archive()` 优先从原位置加载，若已归档则从 completed 目录加载，防止重复回测
+- `load_prediction_archive()` loads from original location first; if archived, loads from completed dir to prevent duplicate backtests
+
 ### v1.4.1 — 2026-03-31
 - 📝 **文档更新**：SKILL.md 新增 HKJC 贴士指数行（数据来源/分析要点/权重6%）；SKILL_EN.md 同步更新
 

@@ -44,9 +44,10 @@ _SCRIPT_DIR   = os.path.dirname(os.path.abspath(__file__))
 _SKILL_DIR    = os.path.dirname(_SCRIPT_DIR)
 CACHE_DIR     = os.path.join(_SKILL_DIR, ".cache")
 ARCHIVE_DIR   = os.path.join(_SKILL_DIR, ".archive")      # 预测存档
+COMPLETED_DIR = os.path.join(ARCHIVE_DIR, "completed")    # 已回测完成的存档
 EVOLUTION_DIR = os.path.join(_SKILL_DIR, ".evolution")    # 进化建议报告
 
-for d in [CACHE_DIR, ARCHIVE_DIR, EVOLUTION_DIR]:
+for d in [CACHE_DIR, ARCHIVE_DIR, COMPLETED_DIR, EVOLUTION_DIR]:
     os.makedirs(d, exist_ok=True)
 
 HKJC_BASE      = "https://racing.hkjc.com"
@@ -762,12 +763,41 @@ def _archive_path(date_str: str, venue: str, suffix: str) -> str:
 
 
 def load_prediction_archive(date_str: str, venue: str) -> dict | None:
-    """加载指定日期的预测存档。"""
+    """加载指定日期的预测存档（优先从原位置加载，若已归档则从 completed 目录加载）。"""
+    # 先检查原位置
     p = _archive_path(date_str, venue, "prediction")
     if os.path.exists(p):
         with open(p, encoding="utf-8") as f:
             return json.load(f)
+    # 若已归档，从 completed 目录加载
+    completed_p = os.path.join(COMPLETED_DIR, os.path.basename(p))
+    if os.path.exists(completed_p):
+        with open(completed_p, encoding="utf-8") as f:
+            return json.load(f)
     return None
+
+
+def _archive_completed_prediction(date_str: str, venue: str) -> bool:
+    """
+    将已回测完成的预测存档移入 completed 目录进行归档隔离。
+    防止已完成的预测存档被后续回测任务重复加载或污染。
+    """
+    src = _archive_path(date_str, venue, "prediction")
+    if not os.path.exists(src):
+        log(f"  ⚠ 预测存档不存在，无需归档：{src}")
+        return False
+    
+    dst = os.path.join(COMPLETED_DIR, os.path.basename(src))
+    try:
+        # 如果目标已存在，先删除（避免覆盖失败）
+        if os.path.exists(dst):
+            os.remove(dst)
+        os.rename(src, dst)
+        log(f"  ✅ 预测存档已归档：{dst}")
+        return True
+    except Exception as e:
+        log(f"  ⚠ 归档失败：{e}")
+        return False
 
 
 # ──────────────────────────────────────────────────────────────
@@ -870,6 +900,9 @@ def main():
 
         # 输出 Markdown 进化报告
         write_evolution_report(backtest_report)
+
+        # 归档：将预测存档移入 completed 目录，防止污染后续预测
+        _archive_completed_prediction(target_date, race_info.get("venue", "ST"))
 
 
 if __name__ == "__main__":
