@@ -189,14 +189,14 @@ Output format:
 | Task | Schedule | Action |
 |------|----------|--------|
 | Race Day Prediction | **Daily 14:30** | Detect tomorrow's race day → batch-predict all races → notify summary |
-| Backtest + Evolution | **Daily 09:00** | Fetch yesterday's results → compare predictions → send full evolution report |
+| Backtest + Evolution | **Daily 23:30** | Fetch today's results → compare predictions → send full evolution report |
 
 ### Self-Evolution Workflow
 
 ```
 [14:30 daily]  Detect race day → batch predict all races → save to .archive/
-                   ↓ (next morning 09:00)
-[09:00 daily]  Fetch actual results → compare predictions
+                   ↓ (same day 23:30)
+[23:30 daily]  Fetch actual results → compare predictions
                Calculate accuracy (win rate / top-3 rate)
                Identify systematic bias (over/under-estimated horses)
                Generate structured evolution suggestions

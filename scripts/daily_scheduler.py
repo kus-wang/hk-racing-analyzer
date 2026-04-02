@@ -370,20 +370,75 @@ def _parse_result_html(html: str) -> list | None:
     """
     从赛果页面 HTML 中解析名次、马号、马名。
     返回 [{"pos":1,"no":"3","name":"马名"}, ...]，按名次排序。
+
+    HKJC 赛果页 <tr> 结构（2025/26 赛季）：
+      <td style="white-space: nowrap;">[名次或含相机链接]</td>
+      <td>\n马号\n</td>
+      <td class="f_fs13 f_tal" ...><a ...>马名</a>&nbsp;(代码)</td>
+      ... 骑师 练马师 磅重 等更多 td ...
     """
-    # HKJC 赛果页面特征：<td class="f_tac">名次</td>
-    # 尝试多种正则模式
-    patterns = [
-        # 模式1：典型结构 位置 马号 马名
+    placements = []
+
+    # ── 方案 A：逐行解析 <tr> 块（主力方案） ──
+    tr_blocks = re.findall(r'<tr[^>]*>(.*?)</tr>', html, re.DOTALL)
+    for tr in tr_blocks:
+        # 提取所有 <td> 的文本内容（去除子标签）
+        tds_raw = re.findall(r'<td[^>]*>(.*?)</td>', tr, re.DOTALL)
+        if len(tds_raw) < 3:
+            continue
+        tds = [re.sub(r'<[^>]+>', ' ', td).strip() for td in tds_raw]
+        tds = [re.sub(r'\s+', ' ', t).strip() for t in tds]
+
+        # 第0列：名次（可能含相机图标文字，取最后的数字）
+        pos_text = tds[0]
+        pos_m = re.search(r'(\d+)\s*$', pos_text)
+        if not pos_m:
+            continue
+
+        # 第1列：马号（纯数字）
+        no_text = tds[1]
+        if not re.match(r'^\d{1,2}$', no_text):
+            continue
+
+        # 第2列：马名（含代码如"爆熱 (G368)"，取括号前的名字）
+        name_text = tds[2]
+        name_m = re.match(r'^(.+?)\s*(?:&nbsp;)?\s*\([A-Z]\d+\)', name_text)
+        if name_m:
+            name = name_m.group(1).strip()
+        else:
+            # 没有代码就直接用，但要排除骑师/练马师（通常名字较短且为汉字）
+            name = name_text.strip()
+            if not name or len(name) > 20:
+                continue
+
+        try:
+            pos = int(pos_m.group(1))
+            no  = str(int(no_text))
+            if 1 <= pos <= 20 and name:
+                placements.append({"pos": pos, "no": no, "name": name})
+        except ValueError:
+            continue
+
+    if placements:
+        # 去重 + 按名次排序
+        seen = set()
+        unique = []
+        for p in sorted(placements, key=lambda x: x["pos"]):
+            if p["no"] not in seen:
+                seen.add(p["no"])
+                unique.append(p)
+        if unique:
+            return unique
+
+    # ── 方案 B：备用简单正则（旧格式兼容） ──
+    fallback_patterns = [
         r"<tr[^>]*>\s*<td[^>]*>(\d+)</td>\s*<td[^>]*>(\d+)</td>\s*<td[^>]*>([^<]+)</td>",
-        # 模式2：有 class 的 td
         r"<td[^>]*f_tac[^>]*>(\d+)</td>[^<]*<td[^>]*>(\d+)</td>[^<]*<td[^>]*>([^<]{2,20})</td>",
     ]
-
-    placements = []
-    for pat in patterns:
+    for pat in fallback_patterns:
         matches = re.findall(pat, html)
         if matches:
+            placements = []
             for m in matches:
                 pos_str, no_str, name = m[0].strip(), m[1].strip(), m[2].strip()
                 try:
@@ -394,20 +449,16 @@ def _parse_result_html(html: str) -> list | None:
                 except ValueError:
                     continue
             if placements:
-                break
+                seen = set()
+                unique = []
+                for p in sorted(placements, key=lambda x: x["pos"]):
+                    if p["no"] not in seen:
+                        seen.add(p["no"])
+                        unique.append(p)
+                if unique:
+                    return unique
 
-    if not placements:
-        return None
-
-    # 去重 + 按名次排序
-    seen = set()
-    unique = []
-    for p in sorted(placements, key=lambda x: x["pos"]):
-        if p["no"] not in seen:
-            seen.add(p["no"])
-            unique.append(p)
-
-    return unique if unique else None
+    return None
 
 
 # ──────────────────────────────────────────────────────────────

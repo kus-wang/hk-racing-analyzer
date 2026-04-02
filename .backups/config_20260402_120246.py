@@ -46,14 +46,12 @@ CACHE_TTL = {
 # ==============================================================================
 
 DEFAULT_WEIGHTS = {
-    # ── 建议2：history_same_condition 0.18→0.16，odds_drift 0.13→0.15（2026-04-02）
-    # ── 建议4：sectional 0.15→0.10，history_same_venue 0.13→0.18（2026-04-02）
-    "history_same_condition": 0.16,  # 同距离+同场地历史战绩（↓ -0.02，降低过拟合）
-    "history_same_venue": 0.18,  # 同场地（不限距离）历史战绩（↑ +0.05，补充配速释放）
+    "history_same_condition": 0.18,  # 同距离+同场地历史战绩（↑ +0.03）
+    "history_same_venue": 0.13,  # 同场地（不限距离）历史战绩（↑ +0.03）
     "class_fit": 0.08,  # 班次适配度
     "odds_value": 0.15,  # 临场赔率绝对值
-    "odds_drift": 0.15,  # 赔率走势变化幅度（↑ +0.02，提高市场信号权重）
-    "sectional": 0.10,  # 配速/分段指数（↓ -0.05，待实测数据接入后恢复15%）
+    "odds_drift": 0.13,  # 赔率走势变化幅度
+    "sectional": 0.15,  # 配速/分段指数
     "jockey": 0.05,  # 骑师（↓ 次要因素）
     "trainer": 0.04,  # 练马师（↓ 次要因素）
     "barrier": 0.05,  # 档位
@@ -62,8 +60,7 @@ DEFAULT_WEIGHTS = {
 }
 
 # Softmax 温度参数（越大概率越均摊，避免极端偏差）
-# 建议1：1.5→2.0，降低极端预测频率（2026-04-02）
-SOFTMAX_TEMPERATURE = 2.0
+SOFTMAX_TEMPERATURE = 1.5
 
 # 单匹马概率上限
 PROB_CAP = 0.50

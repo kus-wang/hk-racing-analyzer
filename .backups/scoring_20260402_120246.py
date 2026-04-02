@@ -12,47 +12,6 @@ HKJC 赛马分析工具 - 评分函数模块
 - 综合评分计算
 """
 
-from datetime import date as _date
-
-
-def _time_weight(race_date_str: str) -> float:
-    """
-    计算历史战绩时间衰减系数（建议5，2026-04-02 引入）。
-
-    近30天  × 1.0
-    31-90天 × 0.8
-    91-180天× 0.6
-    >180天  × 0.4
-
-    race_date_str 支持格式：
-      "YYYY/MM/DD", "YYYY-MM-DD", "DD/MM/YYYY", 或整数/None（无法解析时返回 0.7）
-    """
-    if not race_date_str:
-        return 0.7
-    try:
-        s = str(race_date_str).strip()
-        # 尝试 YYYY/MM/DD 或 YYYY-MM-DD
-        for fmt in ("%Y/%m/%d", "%Y-%m-%d", "%d/%m/%Y"):
-            try:
-                from datetime import datetime as _dt
-                d = _dt.strptime(s, fmt).date()
-                break
-            except ValueError:
-                continue
-        else:
-            return 0.7  # 无法解析
-        days = (_date.today() - d).days
-        if days <= 30:
-            return 1.0
-        elif days <= 90:
-            return 0.8
-        elif days <= 180:
-            return 0.6
-        else:
-            return 0.4
-    except Exception:
-        return 0.7
-
 
 # ==============================================================================
 # 历史战绩评分
@@ -62,12 +21,9 @@ def score_history_same_condition(results, venue, distance, tolerance=200):
     """
     评分：同距离+同场地近5场战绩（0-100）。
 
-    results : 历史出赛列表，每项为 {"venue": "ST", "distance": 1400, "position": 1,
-                                     "date": "YYYY/MM/DD"}（date 可选）
+    results : 历史出赛列表，每项为 {"venue": "ST", "distance": 1400, "position": 1}
     venue   : 本场场地 "ST" / "HV"
     distance: 本场距离（米）
-
-    建议5（2026-04-02）：引入时间衰减加权，近期成绩权重更高。
     """
     same = [
         r for r in results
@@ -79,40 +35,22 @@ def score_history_same_condition(results, venue, distance, tolerance=200):
     if not same:
         return 40  # 中性默认，无同条件记录不惩罚
 
-    # 时间衰减加权：计算等效胜场数和前3场数
-    weighted_wins = 0.0
-    weighted_top3 = 0.0
-    total_weight = 0.0
-
-    for r in same:
-        tw = _time_weight(r.get("date") or r.get("race_date"))
-        pos = r.get("position", 99)
-        weighted_wins += (1 if pos == 1 else 0) * tw
-        weighted_top3 += (1 if pos <= 3 else 0) * tw
-        total_weight += tw
-
-    if total_weight <= 0:
-        return 40
-
-    # 规一化到 n=len(same) 的等效值，保持原评分尺度
-    n = len(same)
-    norm = total_weight / n  # 平均时间权重（约 0.4-1.0）
-    wins = weighted_wins / norm
-    top3 = weighted_top3 / norm
-
-    # 近3场原始名次（无衰减，用于"近期有冠"判断）
-    positions_raw = [r.get("position", 99) for r in same]
+    positions = [r.get("position", 99) for r in same]
+    wins = sum(1 for p in positions if p == 1)
+    top3 = sum(1 for p in positions if p <= 3)
+    recent = len(same)
 
     if wins >= 2:
-        return 75 + min(15, int(wins) * 5)
-    if wins >= 1:
+        return 75 + min(15, wins * 5)
+    if wins == 1:
         base = 55
-        if any(p == 1 for p in positions_raw[-3:]):
+        # 近3场有冠则加分
+        if any(p == 1 for p in positions[-3:]):
             base += 10
         return base
     if top3 >= 2:
         return 42
-    if top3 >= 1:
+    if top3 == 1:
         return 33
     return 15
 
@@ -120,8 +58,6 @@ def score_history_same_condition(results, venue, distance, tolerance=200):
 def score_history_same_venue(results, venue):
     """
     评分：同场地不限距离近5场战绩（0-100）。
-
-    建议5（2026-04-02）：引入时间衰减加权。
     """
     same = [r for r in results if r.get("venue") == venue]
     same = same[-5:]
@@ -129,32 +65,17 @@ def score_history_same_venue(results, venue):
     if not same:
         return 40
 
-    weighted_wins = 0.0
-    weighted_top3 = 0.0
-    total_weight = 0.0
-
-    for r in same:
-        tw = _time_weight(r.get("date") or r.get("race_date"))
-        pos = r.get("position", 99)
-        weighted_wins += (1 if pos == 1 else 0) * tw
-        weighted_top3 += (1 if pos <= 3 else 0) * tw
-        total_weight += tw
-
-    if total_weight <= 0:
-        return 40
-
-    n = len(same)
-    norm = total_weight / n
-    wins = weighted_wins / norm
-    top3 = weighted_top3 / norm
+    positions = [r.get("position", 99) for r in same]
+    wins = sum(1 for p in positions if p == 1)
+    top3 = sum(1 for p in positions if p <= 3)
 
     if wins >= 2:
         return 72
-    if wins >= 1:
+    if wins == 1:
         return 55
     if top3 >= 2:
         return 40
-    if top3 >= 1:
+    if top3 == 1:
         return 30
     return 15
 

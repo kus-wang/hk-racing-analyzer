@@ -91,6 +91,7 @@ def format_markdown_output(race_info, horses):
             )
 
     # ── 投注建议 ──────────────────────────────────────────────────
+    # 投注判断逻辑见 SKILL.md（AI 根据概率分布自主推荐）
     lines.append("\n### 💡 投注建议（仅供参考）\n")
     if sorted_horses:
         w = sorted_horses[0]
