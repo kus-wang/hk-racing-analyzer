@@ -159,6 +159,8 @@ hk-racing-analyzer/
 |---------------|-------------|------------------------|
 | [v1.4.6](RELEASE_NOTES.md#v146--2026-04-03) | 2026-04-03 | 后备马解析与展示：正选退赛时后备马自动递补，展示于报告中（不参与预测评分）/ Reserve horse parsing & display: emergency horses shown in report |
 | [v1.4.5](RELEASE_NOTES.md#v145--2026-04-03) | 2026-04-03 | Playwright单例复用+并行历史抓取(8线程)；中文condition参数；动态班次推断；权重优化(历史33%/赔率30%/配速10%) / Playwright singleton + parallel history fetch; Chinese condition input; dynamic class inference; weight optimization |
+| [v1.4.4](RELEASE_NOTES.md#v144--2026-04-02) | 2026-04-02 | 投注建议模块重构：独赢/位置/连赢/三重彩智能推荐逻辑 / Betting recommendation refactor: smart Win/Place/Quinella/Trio logic |
+| [v1.4.3](RELEASE_NOTES.md#v143--2026-04-02) | 2026-04-02 | 进化建议全量应用：Softmax温度1.5→2.0，历史时间衰减加权，配速临时降权 / Evolution suggestions applied: Softmax temp, time decay, pace weight reduction |
 | [v1.4.2](RELEASE_NOTES.md#v142--2026-04-01) | 2026-04-01 | 回测时间改为 23:30 / Backtest time changed to 23:30；新增预测存档归档隔离 / Archive isolation |
 | [v1.4.1](RELEASE_NOTES.md#v141--2026-03-31) | 2026-03-31 | 新增 HKJC 贴士指数 / Added Tips Index |
 | [v1.4.0](RELEASE_NOTES.md#v140--2026-03-31) | 2026-03-31 | 模块化重构：拆分为10个独立模块 / Modular refactor into 10 modules |
