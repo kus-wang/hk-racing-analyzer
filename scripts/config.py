@@ -16,6 +16,7 @@ HKJC_BASE = "https://racing.hkjc.com"
 RACE_CARD_URL = HKJC_BASE + "/zh-hk/local/information/racecard"
 HORSE_URL = HKJC_BASE + "/zh-hk/local/information/horse?HorseNo="
 TIPS_INDEX_URL = HKJC_BASE + "/racing/chinese/tipsindex/tips_index.asp"
+LOCAL_RESULTS_URL = HKJC_BASE + "/racing/information/Chinese/Racing/LocalResults.aspx"
 
 # ==============================================================================
 # 缓存配置

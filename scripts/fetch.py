@@ -13,8 +13,8 @@ import time
 import atexit
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
-from config import RACE_CARD_URL, TIPS_INDEX_URL
-from cache import _cache_get, _cache_set, _classify_url
+from config import RACE_CARD_URL, TIPS_INDEX_URL, LOCAL_RESULTS_URL
+from cache import _cache_get, _cache_set, _classify_url, _cache_path
 
 
 # ==============================================================================
@@ -215,6 +215,37 @@ def fetch_horse_history(horse_id: str, force_refresh: bool = False) -> dict:
 
 
 # ==============================================================================
+# 赛果
+# ==============================================================================
+
+def fetch_race_results(date: str, venue: str = "ST", force_refresh: bool = False) -> dict:
+    """
+    抓取指定日期+场地的赛果页面 HTML。
+
+    参数：
+        date          : 日期字符串，格式 YYYY/MM/DD（如 "2026/04/01"）
+        venue         : 场地代码，ST（沙田）或 HV（跑马地）
+        force_refresh : 忽略缓存强制重新抓取
+
+    返回：
+        原始 HTML 字符串；抓取失败时返回空字符串。
+    """
+    # HKJC LocalResults.aspx 接受 MeetingDate 参数，格式为 DD/MM/YYYY
+    # 场地通过页面内筛选，查询时不带 venue 参数，由 HTML 内嵌
+    from datetime import datetime as _dt
+    try:
+        dt = _dt.strptime(date, "%Y/%m/%d")
+    except (ValueError, TypeError):
+        dt = _dt.now()
+
+    date_param = dt.strftime("%d/%m/%Y")
+    url = f"{LOCAL_RESULTS_URL}?MeetingDate={date_param}"
+
+    html = fetch_url(url, timeout=20, force_refresh=force_refresh)
+    return html if html else ""
+
+
+# ==============================================================================
 # 贴士指数
 # ==============================================================================
 
@@ -248,7 +279,7 @@ def fetch_tips_index(force_refresh: bool = False) -> dict:
     url = TIPS_INDEX_URL
 
     # 尝试从缓存读取
-    cache_file = _cache_path_local(url)
+    cache_file = _cache_path(url)
     if not force_refresh and os.path.exists(cache_file):
         try:
             with open(cache_file, "r", encoding="utf-8") as f:
@@ -258,6 +289,8 @@ def fetch_tips_index(force_refresh: bool = False) -> dict:
                 return entry.get("content", {})
         except Exception:
             pass
+
+    tips = {}  # 初始化贴士字典
 
     try:
         page = PlaywrightManager.new_page()
@@ -343,13 +376,6 @@ def fetch_tips_index(force_refresh: bool = False) -> dict:
         return _fetch_tips_index_static(url)
 
 
-def _cache_path_local(url: str) -> str:
-    """贴士指数缓存路径（独立函数）"""
-    import hashlib
-    from config import CACHE_DIR
-    url_hash = hashlib.sha256(url.encode()).hexdigest()[:16]
-    os.makedirs(CACHE_DIR, exist_ok=True)
-    return os.path.join(CACHE_DIR, f"{url_hash}.json")
 
 
 def _fetch_tips_index_static(url: str) -> dict:

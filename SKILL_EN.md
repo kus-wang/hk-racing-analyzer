@@ -1,6 +1,6 @@
 ---
 name: hk-racing-analyzer-en
-description: Hong Kong Horse Racing Analysis and Prediction Tool. Provides quantitative analysis based on historical performance, odds trends, sectional timing data, and official tips index, delivering top-3 probability distribution and betting recommendations. Trigger keywords: analyze Sha Tin/Happy Valley race X, horse racing prediction, horse analysis, HKJC racing, today's racing analysis. Use cases: Users want to analyze a specific horse race, predict race outcomes, or view horse historical performance.
+description: Hong Kong Horse Racing Analysis and Prediction Tool. Provides quantitative analysis based on historical performance, odds trends, sectional timing data, and official tips index, delivering top-3 probability distribution and betting recommendations. Trigger keywords: analyze Sha Tin/Happy Valley race X, horse racing prediction, horse analysis, HKJC racing, today's racing analysis, compare horse X and Y, today's results. Use cases: Users want to analyze a race, predict outcomes, compare horses, view race results.
 ---
 
 # Hong Kong Horse Racing Analyzer (HK Racing Analyzer)
@@ -20,8 +20,8 @@ Data-driven horse racing prediction tool combining historical data analysis with
 
 | Dimension | Data Source | Analysis Points | Weight |
 |-----------|-------------|-----------------|--------|
-| **History — Same Condition** | HKJC Horse Profile | Last 5 races at same distance + same venue | **16%** |
-| **History — Same Venue** | HKJC Horse Profile | Last 5 races at same venue (any distance) | **18%** |
+| **History — Same Condition** | HKJC Horse Profile | Last 5 races at same distance + same venue (time-decayed: 30d×1.0, 31-90d×0.8, 91-180d×0.6, >180d×0.4) | **16%** |
+| **History — Same Venue** | HKJC Horse Profile | Last 5 races at same venue (any distance, time-decayed) | **18%** |
 | **Class Fit** | Race Entry | Rating vs. class ceiling/floor | **8%** |
 | **Odds Value** | HKJC Odds Page | Absolute final odds | **15%** |
 | **Odds Drift** | HKJC Odds Page | Opening → final odds movement (shortening = strong signal) | **15%** |
@@ -79,10 +79,39 @@ Extract from user input:
 - Race date (default: today)
 - Venue (Sha Tin `ST` / Happy Valley `HV`)
 - Race number
+- Intent (prediction / comparison / results query)
 
-Examples:
-- "Analyze Sha Tin race 3 today" → date=today, venue=ST, race=3
-- "Analyze Happy Valley race 5 tonight" → date=today, venue=HV, race=5
+**Natural Language Date Support**:
+
+| User Input | Parsed As |
+|------------|-----------|
+| "today" | Current date |
+| "tomorrow" | Current date + 1 day |
+| "tomorrow afternoon/evening" | Current date + 1 day |
+| "next Monday" etc. | Specified weekday this week |
+| "2026/04/05" | Exact date |
+| "April 5th" | Specified month/day, current year |
+
+**Venue Chinese → Code Mapping**:
+
+| User Input | Parsed As |
+|------------|-----------|
+| 沙田 / ST / Sha Tin | ST |
+| 跑马地 / HV / Happy Valley / tonight | HV |
+
+**Intent Recognition**:
+
+| Keywords | Recognized As |
+|----------|---------------|
+| "analyze", "predict", "recommend" | Race prediction |
+| "compare", "vs", "which is better", "X and Y" | Horse comparison |
+| "results", "who won", "finished" | Race results query |
+
+**Full Parsing Examples**:
+- "Analyze Sha Tin race 3 today" → date=today, venue=ST, race=3, intent=prediction
+- "Analyze Happy Valley race 5 tonight" → date=today, venue=HV, race=5, intent=prediction
+- "Compare horse 3 and 7" → date=today, intent=comparison, horses=[3, 7]
+- "Who won race 2 at Sha Tin today" → date=today, venue=ST, race=2, intent=results
 
 ### Step 2: Fetch Race Data (with Caching)
 
@@ -147,6 +176,9 @@ web_search "Happy Valley tonight racing tips"
 ```
 Final Score = Local Analysis Score × 96% + Expert Consensus Score × 4%
 ```
+> Local Analysis Score = weighted sum of 8 dimensions (see weight table above).
+> Expert Consensus Score = number of experts recommending this horse ÷ total experts, scaled to 0-100.
+> Softmax temperature = 2.0 (reduced from 1.5 to lower extreme predictions; applied during probability normalization).
 
 #### D. Race Scenario Mode
 
@@ -178,6 +210,16 @@ Output format:
 | 🥇   | X   | XXX        | XX%       | ...        |
 | 🥈   | X   | XXX        | XX%       | ...        |
 | 🥉   | X   | XXX        | XX%       | ...        |
+
+### 🎯 Betting Style Profile
+
+Determine the appropriate betting strategy based on probability distribution:
+
+| Style | Condition | Meaning | Recommended Strategy |
+|-------|-----------|---------|---------------------|
+| **🛡️ Conservative** | Top1 prob ≥ 35%, or Top1+Top2 sum ≥ 60% | Clear favorite, low risk | Win/Place preferred, control cost |
+| **⚡ Aggressive** | Evenly distributed, Top1 < 25%, top-3 spread < 15% | Open race, upset opportunity | Dark horse hunting, PQ/Trio |
+| **🔀 Undecided** | Multiple horses at ~20%+ each (≥3) | Hard to separate | PQ all three pairs, spread risk |
 
 ### 📋 Full Field Scoring
 (Each dimension scored 0-100, for reference)
@@ -256,6 +298,82 @@ Output format:
 ```
 
 > **Note**: The above is technical reference only. AI should judge flexibly based on actual probability distribution. The script (`output.py`) only outputs probability data; betting judgment is performed autonomously by AI when generating the report.
+
+---
+
+### Supplementary: Horse Comparison Feature
+
+When the user requests a comparison between two (or more) horses:
+
+**Step 1**: Identify comparison request, extract horse number(s)
+
+Recognize phrases like "compare 3 and 7", "which is better, X or Y", "any value in horse 3 vs 7".
+
+**Step 2**: Fetch both horses' scoring data for this race
+
+Run `analyze_race.py` to get full-field scores, extract the relevant horses' dimensional sub-scores.
+
+**Step 3**: Dimension-by-dimension comparison
+
+| Dimension | What to Compare |
+|-----------|----------------|
+| Overall Score | Total score ranking |
+| Historical Performance | Same-condition / same-venue win rate |
+| Odds Trend | Market signal (shortening vs drifting) |
+| Pace Match | Running style vs. track condition fit |
+| Jockey / Trainer | Combined strength |
+
+**Step 4**: Output comparison report
+
+```markdown
+## [Venue] Race X — Horse Comparison: #X vs #X
+
+### One-Line Verdict
+[Quick judgment based on score gap]
+
+### Dimension Comparison
+:| Dimension | #X [Horse Name] | #X [Horse Name] | Advantage |
+|:---------|:--------------:|:--------------:|:---------:|
+| Overall Score | XX | XX | #X |
+| Same-Condition History | XX | XX | #X |
+| Odds Trend | XX | XX | #X |
+| ... | ... | ... | ... |
+
+### Detailed Analysis by Dimension
+[Brief explanation of gap causes per dimension]
+
+### Overall Recommendation
+[Bet direction advice combining probability data]
+```
+
+---
+
+### Supplementary: Today's Race Results Query
+
+When the user queries results of a race that has already finished:
+
+**Data Source**: Use `web_fetch` to scrape HKJC results page
+
+```
+https://racing.hkjc.com/racing/information/English/Racing/LocalResults.aspx
+```
+
+**Logic**:
+- Results available after ~23:00 on race day
+- Extract: race number, winning horse (no. + name), 2nd, 3rd, official time
+
+**Results Output Format**:
+
+```markdown
+## [Date] [Venue] Race Results
+
+:| Race | 1st | 2nd | 3rd | Time |
+|:----:|:---:|:---:|:---:|:----:|
+| 1 | No.X [Horse] | No.X [Horse] | No.X [Horse] | HH:MM |
+| 2 | ... | ... | ... | ... |
+```
+
+If the race has not yet concluded, inform the user of the estimated results publication time.
 
 ---
 
@@ -346,10 +464,10 @@ python scripts/apply_evolution.py --rollback
 | `main.py` | CLI parsing, main workflow orchestration, parallel history fetching (8 threads) |
 | `analyze.py` | Single horse multi-dimensional scoring |
 | `scoring.py` | All scoring functions (history/odds/pace/jockey/tips/expert) |
-| `fetch.py` | HTTP requests, Playwright dynamic loading, tips index / horse history |
-| `parse.py` | Race card & horse history HTML parsing |
+| `fetch.py` | HTTP requests, Playwright dynamic loading, tips index / horse history / race results |
+| `parse.py` | Race card, horse history & race results HTML parsing |
 | `cache.py` | Disk cache read/write, TTL expiry, stats cleanup |
-| `output.py` | Markdown report formatting |
+| `output.py` | Markdown report formatting, auto betting-style classification |
 | `config.py` | URL constants, cache TTL, default weights |
 | `weights.py` | Scenario/venue/distance-adaptive dynamic weight calculation |
 | `probability.py` | Softmax normalized probability calculation |

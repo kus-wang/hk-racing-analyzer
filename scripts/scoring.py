@@ -12,7 +12,7 @@ HKJC 赛马分析工具 - 评分函数模块
 - 综合评分计算
 """
 
-from datetime import date as _date
+from datetime import date as _date, datetime as _dt
 
 
 def _time_weight(race_date_str: str) -> float:
@@ -34,7 +34,6 @@ def _time_weight(race_date_str: str) -> float:
         # 尝试 YYYY/MM/DD 或 YYYY-MM-DD
         for fmt in ("%Y/%m/%d", "%Y-%m-%d", "%d/%m/%Y"):
             try:
-                from datetime import datetime as _dt
                 d = _dt.strptime(s, fmt).date()
                 break
             except ValueError:
@@ -447,30 +446,6 @@ def score_trainer(trainer_name: str, horse_history: list) -> int:
 # ==============================================================================
 # 贴士指数评分
 # ==============================================================================
-
-def score_tips_index(tips_value: int) -> int:
-    """
-    评分：HKJC 官方贴士指数（0-100）。
-
-    HKJC Tips Index 通常范围 80-120，
-    - 100 = 基准值
-    - >100 = 偏热（市场看好）
-    - <100 = 偏冷（市场看淡）
-
-    参数：
-        tips_value : 贴士指数（整数，通常 80-120）
-    """
-    if tips_value is None or tips_value <= 0:
-        return 50  # 无数据时返回中性默认值
-
-    # 贴士指数 100 为基准，映射到 50 分
-    # 每偏离 5 个点，评分 ±10 分
-    offset = tips_value - 100
-    score = 50 + (offset / 5) * 10
-
-    # 限制范围 10-100
-    return max(10, min(100, round(score)))
-
 
 def score_tips_index_hkjc(tips_value: float) -> int:
     """

@@ -9,6 +9,61 @@ HKJC 赛马分析工具 - 输出格式化模块
 from datetime import datetime
 
 
+def classify_betting_style(sorted_horses):
+    """
+    根据前3名概率分布，判断本场适合的投注风格。
+
+    参数：
+        sorted_horses : 已按 probability 降序排列的马列表
+
+    返回：
+        (emoji_style, style_name, reason, strategy)
+        示例：("🛡️", "稳妥型", "Top1 概率 38.2%，明显领先", "优先独赢/位置，控成本")
+    """
+    if not sorted_horses or len(sorted_horses) < 3:
+        return ("🔍", "待观察", "马匹数据不足，无法判断", "建议观望")
+
+    top1 = sorted_horses[0]["probability"]
+    top2 = sorted_horses[1]["probability"]
+    top3 = sorted_horses[2]["probability"]
+
+    top2_sum = top1 + top2
+    top3_sum = top1 + top2 + top3
+
+    # 前三名最大差值
+    top_diff = max(top1, top2, top3) - min(top1, top2, top3)
+
+    # 20%+ 的马匹数量
+    strong_count = sum(1 for h in sorted_horses[:5] if h["probability"] >= 20)
+
+    # 🛡️ 稳妥型
+    if top1 >= 35 or top2_sum >= 60:
+        return (
+            "🛡️",
+            "稳妥型",
+            f"Top1 概率 {top1:.1f}%{f'，领先优势明显' if top1 >= 35 else ''}"
+            f"{f'，前二概率和 {top2_sum:.1f}%' if top2_sum >= 60 else ''}",
+            "优先独赢/位置，控成本"
+        )
+
+    # 🔀 纠结型
+    if strong_count >= 3:
+        return (
+            "🔀",
+            "纠结型",
+            f"存在 {strong_count} 匹高概率马（≥20%），互有长短",
+            "PQ 三组全包，分散风险"
+        )
+
+    # ⚡ 进取型（默认）
+    return (
+        "⚡",
+        "进取型",
+        f"Top1 {top1:.1f}% < 25%，前三差值 {top3:.1f}%，格局开放",
+        "关注冷门搏高赔，或 PQ/三重彩"
+    )
+
+
 def format_markdown_output(race_info, horses, reserve_horses=None):
     """生成 Markdown 格式分析报告（含历史战绩摘要与分项评分）
 
@@ -106,6 +161,14 @@ def format_markdown_output(race_info, horses, reserve_horses=None):
                 f"| {h['no']} | {h['name']} | {h.get('current_rating', '-')} | {h.get('trainer', '-')} |"
             )
         lines.append("\n> ⚠️ 后备马不参与预测评分，仅作信息参考。若正选马退赛，后备马将递补参与竞猜。")
+
+    # ── 投注风格定位 ───────────────────────────────────────────────
+    emoji_s, style_name, reason, strategy = classify_betting_style(sorted_horses)
+    lines.append(f"\n### 🎯 投注风格定位\n")
+    lines.append(f"| 风格 | 定位 | 推荐策略 |")
+    lines.append(f"|:----:|------|----------|")
+    lines.append(f"| **{emoji_s} {style_name}** | {reason} | {strategy} |")
+    lines.append("")
 
     # ── 投注建议 ──────────────────────────────────────────────────
     # 投注判断逻辑见 SKILL.md（AI 根据概率分布自主推荐）

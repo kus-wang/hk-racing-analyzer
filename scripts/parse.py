@@ -335,6 +335,181 @@ def parse_race_entries(html, race_no=None):
     return horses
 
 
+def parse_race_results(html: str) -> list:
+    """
+    从 HKJC LocalResults.aspx 页面 HTML 解析全场赛果。
+
+    返回结构（按场次分组）：
+    [
+        {
+            "race_no": 1,
+            "distance": 1200,
+            "condition": "好地",
+            "results": [
+                {
+                    "pos":      1,
+                    "no":       "12",
+                    "name":     "爆熱",
+                    "jockey":   "艾兆禮",
+                    "trainer":  "告東尼",
+                    "weight":   118,
+                    "barrier":  7,
+                    "distance": "-",
+                    "finish_time": "1:08.88",
+                    "odds":     3.7,
+                },
+                ...
+            ]
+        },
+        ...
+    ]
+
+    若解析失败，返回空列表 []。
+    """
+    if not html or len(html) < 500:
+        return []
+
+    races = []
+
+    # ── 找所有赛果表格（class="f_tac table_bd draggable"）──
+    # 每张表对应一个场次，<thead> 中含 "名次" / "馬號"
+    table_pattern = re.compile(
+        r'<table[^>]*class="[^"]*f_tac[^"]*table_bd[^"]*"[^>]*>(.*?)</table>',
+        re.DOTALL | re.IGNORECASE
+    )
+
+    for tbl_m in table_pattern.finditer(html):
+        tbl_html = tbl_m.group(0)
+        # 检查是否为赛果表（表头含"名次"）
+        if '名次' not in tbl_html or '馬號' not in tbl_html:
+            continue
+
+        # 提取场次号（查找 "第 X 场" 附近的文字）
+        race_no = 0
+        race_m = re.search(r'第\s*([1-9]|1[0-9])\s*場', tbl_html)
+        if race_m:
+            race_no = int(race_m.group(1))
+        if not race_no:
+            race_no = len(races) + 1
+
+        # 提取距离（表头附近 "1200米"）
+        distance = 0
+        dist_m = re.search(r'(\d+)\s*米', tbl_html)
+        if dist_m:
+            distance = int(dist_m.group(1))
+
+        # 提取场地状况（表头附近 "好地" 等）
+        condition = ""
+        for cond in ["好地", "快地", "黏地", "濕慢地", "全天候"]:
+            if cond in tbl_html:
+                condition = cond
+                break
+
+        # ── 逐 <tr> 解析马匹成绩 ──
+        tr_pattern = re.compile(r'<tr[^>]*>(.*?)</tr>', re.DOTALL)
+        td_pattern = re.compile(r'<td[^>]*>(.*?)</td>', re.DOTALL)
+
+        results = []
+        seen_nos = set()
+
+        for tr_m in tr_pattern.finditer(tbl_html):
+            tr_html = tr_m.group(1)
+            tds_raw = td_pattern.findall(tr_html)
+            if len(tds_raw) < 3:
+                continue
+
+            # 清理：去除所有子标签，只保留文本
+            tds = [
+                re.sub(r'<[^>]+>', ' ', td).strip().replace('\n', ' ').replace('\r', '')
+                for td in tds_raw
+            ]
+            tds = [re.sub(r'\s+', ' ', t).strip() for t in tds]
+
+            # 列0：名次（可能含相机链接文字，取末尾数字）
+            pos_text = tds[0] if len(tds) > 0 else ""
+            pos_m = re.search(r'(\d+)\s*$', pos_text)
+            if not pos_m:
+                continue
+
+            # 列1：马号（纯数字 1-14）
+            no_text = tds[1] if len(tds) > 1 else ""
+            no_m = re.match(r'^\s*(\d{1,2})\s*$', no_text)
+            if not no_m:
+                continue
+            no = no_m.group(1).strip()
+            if no in seen_nos:
+                continue
+            seen_nos.add(no)
+
+            # 列2：马名（可能含 "(G368)" 后缀）
+            name_text = tds[2] if len(tds) > 2 else ""
+            name_m = re.match(r'^(.+?)\s*(?:&nbsp;)?\s*\([A-Z]\d+\)', name_text)
+            name = name_m.group(1).strip() if name_m else name_text.strip()
+
+            # 列3：骑师
+            jockey = tds[3].strip() if len(tds) > 3 else ""
+
+            # 列4：练马师
+            trainer = tds[4].strip() if len(tds) > 4 else ""
+
+            # 列5：实际负磅
+            weight = 0
+            wt_m = re.search(r'\d+', tds[5]) if len(tds) > 5 else None
+            if wt_m:
+                weight = int(wt_m.group(0))
+
+            # 列7：档位
+            barrier = 0
+            br_m = re.search(r'\d+', tds[7]) if len(tds) > 7 else None
+            if br_m:
+                barrier = int(br_m.group(0))
+
+            # 列8：头马距离
+            distance_txt = tds[8].strip() if len(tds) > 8 else "-"
+
+            # 列10：完成时间
+            finish_time = tds[10].strip() if len(tds) > 10 else ""
+
+            # 列11：独赢赔率
+            odds = None
+            od_m = re.search(r'[\d.]+', tds[11]) if len(tds) > 11 else None
+            if od_m:
+                try:
+                    odds = float(od_m.group(0))
+                except ValueError:
+                    odds = None
+
+            try:
+                pos = int(pos_m.group(1))
+                if 1 <= pos <= 20 and name:
+                    results.append({
+                        "pos": pos,
+                        "no": no,
+                        "name": name,
+                        "jockey": jockey,
+                        "trainer": trainer,
+                        "weight": weight,
+                        "barrier": barrier,
+                        "distance": distance_txt,
+                        "finish_time": finish_time,
+                        "odds": odds,
+                    })
+            except (ValueError, IndexError):
+                continue
+
+        if results:
+            races.append({
+                "race_no": race_no,
+                "distance": distance,
+                "condition": condition,
+                "results": results,
+            })
+
+    # 按场次号排序
+    races.sort(key=lambda x: x["race_no"])
+    return races
+
+
 def validate_race_entries(horses, race_no=None):
     """
     验证解析结果的完整性，提前发现页面结构变更。

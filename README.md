@@ -157,6 +157,7 @@ hk-racing-analyzer/
 
 | 版本 / Version | 日期 / Date | 主要更新 / Main Changes |
 |---------------|-------------|------------------------|
+| [v1.4.7](RELEASE_NOTES.md#v147--2026-04-03) | 2026-04-03 | Bug修复+代码清理；Skill文档增强（触发词/自然语言/投注风格/对比功能/赛果查询）；新增投注风格自动标注+赛果查询模块 / Bug fixes, code cleanup, skill docs enhancement, betting style classification, race results query |
 | [v1.4.6](RELEASE_NOTES.md#v146--2026-04-03) | 2026-04-03 | 后备马解析与展示：正选退赛时后备马自动递补，展示于报告中（不参与预测评分）/ Reserve horse parsing & display: emergency horses shown in report |
 | [v1.4.5](RELEASE_NOTES.md#v145--2026-04-03) | 2026-04-03 | Playwright单例复用+并行历史抓取(8线程)；中文condition参数；动态班次推断；权重优化(历史33%/赔率30%/配速10%) / Playwright singleton + parallel history fetch; Chinese condition input; dynamic class inference; weight optimization |
 | [v1.4.4](RELEASE_NOTES.md#v144--2026-04-02) | 2026-04-02 | 投注建议模块重构：独赢/位置/连赢/三重彩智能推荐逻辑 / Betting recommendation refactor: smart Win/Place/Quinella/Trio logic |

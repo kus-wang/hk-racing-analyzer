@@ -71,7 +71,6 @@ def analyze_horse(horse, venue, distance, track_condition, tips_data=None):
         run_styles = []
         for r in history[-5:]:  # 最近5场
             rp = r.get("running_positions", [])
-            n_runners = 14  # 默认估算
             if rp:
                 first_pos = rp[0]
                 last_pos = rp[-1]
