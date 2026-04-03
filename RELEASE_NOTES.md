@@ -4,7 +4,97 @@
 
 ---
 
+## v1.4.8 — 2026-04-03
+
+### 🚀 缓存系统优化（Zlib 压缩 + 结构化存储）
+
+**背景**：原缓存直接存储原始 HTML（200KB/文件），长期运行后 `.cache/` 目录膨胀。
+
+#### Zlib 压缩存储（`cache.py`）
+
+- `_cache_set()` / `_cache_get()` 新增 Zlib 压缩/解压
+- HTML 内容压缩率约 **70-80%**（200KB → 40-60KB）
+- 新增 `_compress()` / `_decompress()` 辅助函数
+- 旧版未压缩条目自动识别并兼容（`_compressed: false` 标记）
+
+#### 结构化数据优先存储（`cache.py` + `fetch.py`）
+
+- 新增 `parsed` 字段：直接存储解析后的结构化数据（如赛果 dict ~5KB vs 原始 HTML ~200KB）
+- 读缓存时优先返回 `parsed`（若存在），避免回读时重复解析
+- 涉及函数：
+  - `fetch_horse_history()`：parse 后同步写回 `parsed` 字段
+  - `fetch_race_results()`：parse 后同步写回 `parsed` 字段
+  - `fetch_race_odds()`：赔率 dict 直接存为 `parsed`（不再存原始 HTML）
+  - `_save_odds_cache()`：简化为调用 `_cache_set()`
+- `_cache_get()` 新增 `cache_key` 参数，支持赔率等自定义 key 场景
+
+**综合效果**：缓存空间预计减少 **80-90%**，且热路径（已缓存的赛果/赔率）不再重复解析 HTML。
+
+---
+
+### 🚀 投注赔率功能补全与优化
+
+**背景**：v1.4.7 引入了投注赔率抓取框架，本版本补全解析逻辑并集成到主分析流程。
+
+#### 投注赔率完整解析（`parse.py` → `fetch.py` → `main.py`）
+
+**涉及文件**：`config.py`、`fetch.py`、`parse.py`、`main.py`
+
+##### `parse_race_odds()` 函数（`parse.py`）
+- 解析 bet.hkjc.com 投注赔率页面，支持 5 种投注方式：
+  - **独赢 (Win)**：马号 → 赔率字典
+  - **位置 (Place)**：马号 → 位置赔率字典
+  - **连赢 (Quinella)**：组合字符串 → 赔率字典（如 `"1,2": 45.0`）
+  - **三重彩 (Trio)**：三元组合 → 赔率字典
+  - **位置Q (Quinella Place)**：二元组合 → 赔率字典
+- 智能表头识别：动态匹配"馬號/馬号/Horse No"等列名
+- 提取赔率更新时间戳
+- 返回 `status: ok` / `unavailable`，赛前无赔率时正常返回空字典
+
+##### `fetch_race_odds()` 函数（`fetch.py`）
+- 独立缓存 key（`odds_{date}_{venue}_{race_no}`），避免与排位表缓存混淆
+- 5 分钟 TTL，实时反映临场赔率变化
+- `fetch_race_odds()` 在 main.py 中调用，将赔率数据注入每匹马的 `final_odds` 字段
+
+##### `main.py` 集成
+- 新增 `--odds` 参数（可选，控制是否抓取赔率）
+- 赔率抓取后打印摘要：独赢/位置/连赢数量，热门前三马匹
+- 支持 `--force-refresh` 强制刷新赔率缓存
+
+**数据流向**：
+```
+bet.hkjc.com → fetch_race_odds() → parse_race_odds()
+                                      ↓
+                                  odds_data dict
+                                      ↓
+                              main.py 注入 → 每匹马的 final_odds
+                                      ↓
+                              scoring.py 评分函数使用
+```
+
+---
+
 ## v1.4.7 — 2026-04-03
+
+### ✨ 新增功能
+
+#### 投注赔率抓取（bet.hkjc.com）
+
+- **涉及文件**：`config.py`、`fetch.py`、`parse.py`、`main.py`
+- **功能**：从 HKJC 投注赔率页面抓取各投注方式赔率数据
+- **URL 模板**：`https://bet.hkjc.com/ch/racing/wp/{YYYY-MM-DD}/{VENUE}/{RACE_NO}`
+- **返回数据**：
+  - `win` — 独赢赔率（dict，马号→赔率值）
+  - `place` — 位置赔率
+  - `quinella` — 连赢赔率
+  - `trio` — 三重彩赔率
+  - `quinella_place` — 位置Q赔率
+  - `last_updated` — 更新时间
+  - `status` — ok / unavailable
+- **缓存 TTL**：5 分钟（临场实时变化）
+- **注意事项**：赛前未开盘时返回 `status: unavailable`，赔率字段为空，均为正常现象
+
+---
 
 ### 🐛 Bug 修复
 

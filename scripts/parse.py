@@ -510,6 +510,227 @@ def parse_race_results(html: str) -> list:
     return races
 
 
+def parse_race_odds(html: str, race_no: int = None, venue: str = None, date: str = None) -> dict:
+    """
+    解析 HKJC 投注赔率页面 HTML，提取各投注方式的赔率。
+
+    支持的投注类型：
+    - 独赢 (Win)
+    - 位置 (Place)
+    - 连赢 (Quinella)
+    - 三重彩 (Trio)
+    - 位置Q (Quinella Place)
+
+    返回结构：
+    {
+        "race_no": 1,
+        "venue": "ST",
+        "date": "2026-04-06",
+        "win":             {"#1": 8.5, "#2": 12.0, ...},
+        "place":           {"#1": 2.8, "#2": 3.5, ...},
+        "quinella":        {"1,2": 45.0, "1,3": 52.0, ...},
+        "trio":            {"1,2,3": 180.0, ...},
+        "quinella_place":  {"1,2": 18.0, ...},
+        "last_updated":    "14:30",
+        "source":          "bet.hkjc.com",
+        "status":          "ok",       # ok / unavailable
+    }
+
+    若解析失败或页面无数据，返回空结构。
+    """
+    import re
+
+    result = {
+        "race_no": race_no,
+        "venue": venue,
+        "date": date,
+        "win": {},
+        "place": {},
+        "quinella": {},
+        "trio": {},
+        "quinella_place": {},
+        "last_updated": None,
+        "source": "bet.hkjc.com",
+        "status": "unavailable",
+    }
+
+    if not html or len(html) < 200:
+        return result
+
+    # ── 提取更新时间 ─────────────────────────────────────────────
+    time_m = re.search(r'更新(?:时间)?[:：]?\s*(\d{1,2}:\d{2})', html)
+    if not time_m:
+        time_m = re.search(r'更新[:：]\s*(\d{1,2}:\d{2})', html)
+    if not time_m:
+        time_m = re.search(r'(\d{1,2}:\d{2})\s*更新', html)
+    if time_m:
+        result["last_updated"] = time_m.group(1)
+
+    # ── 通用赔率解析辅助函数 ─────────────────────────────────────
+    def extract_float(text: str) -> float:
+        """从文本中提取浮点数"""
+        text = text.strip()
+        m = re.search(r'[\d.]+', text)
+        if m:
+            try:
+                return float(m.group(0))
+            except ValueError:
+                pass
+        return None
+
+    def clean_odds_text(td_html: str) -> str:
+        """清理 TD 中的 HTML 标签，保留纯赔率文本"""
+        clean = re.sub(r'<[^>]+>', ' ', td_html)
+        clean = re.sub(r'\s+', ' ', clean)
+        return clean.strip()
+
+    # ── 独赢/位置赔率解析 ─────────────────────────────────────────
+    # bet.hkjc.com 独赢/位置表格结构：
+    # 表头行含 "馬號" / "獨贏" / "位置" 关键字
+    # 数据行：<tr>...<td>马号</td><td>赔率数值</td><td>位置赔率数值</td>...
+    win_dict = {}
+    place_dict = {}
+
+    # 找到所有包含 "獨贏" 或 "Win" 的表格
+    for table_match in re.finditer(
+        r'<table[^>]*>(.*?)</table>', html, re.DOTALL | re.IGNORECASE
+    ):
+        tbl = table_match.group(1)
+
+        # 检查是否是独赢/位置表格
+        if not re.search(r'獨贏|Win', tbl, re.IGNORECASE):
+            continue
+
+        # 逐行解析
+        tr_pattern = re.compile(r'<tr[^>]*>(.*?)</tr>', re.DOTALL | re.IGNORECASE)
+        td_pattern = re.compile(r'<td[^>]*>(.*?)</td>', re.DOTALL | re.IGNORECASE)
+
+        header_col_map = {}  # col_index -> header_name
+        data_rows = []
+        found_header = False
+
+        for tr_m in tr_pattern.finditer(tbl):
+            tr_html = tr_m.group(1)
+            tds_raw = td_pattern.findall(tr_html)
+            if not tds_raw:
+                continue
+
+            clean_tds = [clean_odds_text(td) for td in tds_raw]
+
+            # 检测表头行（含有马号/独赢/位置关键字）
+            if any(k in ' '.join(clean_tds) for k in ['馬號', '马号', 'Horse', 'horse']):
+                # 建立列索引映射
+                for idx, text in enumerate(clean_tds):
+                    text_upper = text.upper()
+                    if '馬號' in text or '馬号' in text or 'HORSE NO' in text_upper or 'NO.' in text_upper:
+                        header_col_map[idx] = 'horse_no'
+                    elif '獨贏' in text or 'WIN' in text_upper:
+                        header_col_map[idx] = 'win'
+                    elif '位置' in text or 'PLACE' in text_upper:
+                        header_col_map[idx] = 'place'
+                found_header = True
+                continue
+
+            if not found_header:
+                continue
+
+            # 解析数据行
+            # 找马号列
+            horse_no_idx = None
+            for idx, text in enumerate(clean_tds):
+                m = re.match(r'^\s*(\d{1,2})\s*$', text)
+                if m and idx not in [header_col_map.get(k) for k in ['win', 'place']]:
+                    horse_no_idx = idx
+                    break
+
+            if horse_no_idx is None:
+                continue
+
+            try:
+                horse_no = int(re.sub(r'[^\d]', '', clean_tds[horse_no_idx]))
+            except (ValueError, IndexError):
+                continue
+
+            # 找独赢赔率
+            for idx, label in header_col_map.items():
+                if label == 'win' and idx < len(clean_tds):
+                    odds_val = extract_float(clean_tds[idx])
+                    if odds_val and odds_val > 0:
+                        win_dict[f"#{horse_no}"] = odds_val
+
+                # 找位置赔率（同一马号对应的位置列）
+                if label == 'place' and idx < len(clean_tds):
+                    odds_val = extract_float(clean_tds[idx])
+                    if odds_val and odds_val > 0:
+                        place_dict[f"#{horse_no}"] = odds_val
+
+    result["win"] = win_dict
+    result["place"] = place_dict
+
+    # ── 连赢/三重彩/位置Q解析 ────────────────────────────────────
+    # 投注组合格式：数字组合作为 key，如 "1,2" 或 "1,2,3"
+    quinella_dict = {}
+    trio_dict = {}
+    qp_dict = {}
+
+    # 连赢：含 "連贏" / "Quinella"
+    # 三重彩：含 "三重彩" / "Trio"
+    # 位置Q：含 "位置Q" / "QP" / "Quinella Place"
+
+    combo_pattern = re.compile(
+        r'<td[^>]*>\s*(\d[\d,\s]*\d)\s*</td>\s*<td[^>]*>([\d.]+)</td>',
+        re.DOTALL | re.IGNORECASE
+    )
+
+    def parse_combo_odds(html_section: str, key_prefix: str) -> dict:
+        """解析组合赔率（连赢/三重彩/位置Q）"""
+        combos = {}
+        for m in re.finditer(
+            r'<td[^>]*>\s*(\d[\d,\s]*\d)\s*</td>\s*<td[^>]*>\s*([\d.]+)\s*</td>',
+            html_section, re.DOTALL
+        ):
+            combo_str = m.group(1).replace(' ', '').replace(',', ',')
+            odds_val = extract_float(m.group(2))
+            if odds_val and odds_val > 0:
+                combos[combo_str] = odds_val
+        return combos
+
+    # 扫描整个页面找各投注类型区段
+    for section_m in re.finditer(
+        r'(?:連贏|Quinella[^P]|QUINELLA)', html, re.IGNORECASE
+    ):
+        start = section_m.start()
+        # 找该区段往后约 5000 字符的表格
+        section_window = html[start:start + 8000]
+        quinella_dict.update(parse_combo_odds(section_window, "quinella"))
+
+    for section_m in re.finditer(
+        r'(?:三重彩|Trio[^P]|TRIO)', html, re.IGNORECASE
+    ):
+        start = section_m.start()
+        section_window = html[start:start + 8000]
+        trio_dict.update(parse_combo_odds(section_window, "trio"))
+
+    for section_m in re.finditer(
+        r'(?:位置Q|QP|Quinella\s*Place)', html, re.IGNORECASE
+    ):
+        start = section_m.start()
+        section_window = html[start:start + 8000]
+        qp_dict.update(parse_combo_odds(section_window, "quinella_place"))
+
+    result["quinella"] = quinella_dict
+    result["trio"] = trio_dict
+    result["quinella_place"] = qp_dict
+
+    # ── 判断状态 ─────────────────────────────────────────────────
+    has_any_odds = any([
+        win_dict, place_dict, quinella_dict, trio_dict, qp_dict
+    ])
+    result["status"] = "ok" if has_any_odds else "unavailable"
+
+    return result
+
+
 def validate_race_entries(horses, race_no=None):
     """
     验证解析结果的完整性，提前发现页面结构变更。

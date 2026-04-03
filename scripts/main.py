@@ -24,7 +24,7 @@ from config import RACE_CARD_URL
 from weights import get_weights
 from probability import softmax_probability
 from cache import cache_stats, cache_clear
-from fetch import fetch_url_with_playwright, fetch_tips_index, fetch_horse_history
+from fetch import fetch_url_with_playwright, fetch_tips_index, fetch_horse_history, fetch_race_odds
 from parse import parse_race_entries, validate_race_entries
 from scoring import calculate_total_score
 from output import format_markdown_output
@@ -348,6 +348,31 @@ def main():
         print("⚠️  未获取到贴士数据（可能页面结构变更或网络问题）")
     print()
 
+    # ── 抓取投注赔率 ─────────────────────────────────────────────
+    print(f"💰 正在抓取投注赔率数据...")
+    odds_data = fetch_race_odds(
+        race_date=race_date,
+        venue=venue,
+        race_no=race_no,
+        force_refresh=force_refresh
+    )
+    odds_status = odds_data.get("status", "unavailable")
+    if odds_status == "ok":
+        win_count = len(odds_data.get("win", {}))
+        place_count = len(odds_data.get("place", {}))
+        quinella_count = len(odds_data.get("quinella", {}))
+        print(f"✅ 赔率已获取 | 独赢:{win_count} 位置:{place_count} 连赢:{quinella_count}")
+        if odds_data.get("last_updated"):
+            print(f"   更新时间: {odds_data['last_updated']}")
+        # 打印独赢赔率摘要
+        if odds_data.get("win"):
+            win_sorted = sorted(odds_data["win"].items(), key=lambda x: x[1])
+            top3 = [f"#{k[1:]}={v:.1f}" for k, v in win_sorted[:3]]
+            print(f"   热门独赢（前3）: {', '.join(top3)}")
+    else:
+        print("⚠️  赔率未开盘或抓取失败（正常现象：赛前通常无赔率）")
+    print()
+
     # ── 并行抓取每匹正选马历史战绩 ─────────────────────────────────
     regular_horses = fetch_all_horse_history(
         regular_horses,
@@ -359,6 +384,14 @@ def main():
 
     # ── 导入 analyze_horse（避免循环导入）───────────────────────
     from analyze import analyze_horse
+
+    # ── 将赔率数据注入到每匹马 ────────────────────────────────────
+    win_odds = odds_data.get("win", {})
+    place_odds = odds_data.get("place", {})
+    for horse in regular_horses:
+        horse_key = f"#{horse['no']}"
+        horse["final_odds"] = win_odds.get(horse_key)    # 临场独赢赔率
+        horse["opening_odds"] = None                      # 开盘赔率（待后续扩展）
 
     # 各维度评分（传入贴士指数数据）
     for horse in regular_horses:

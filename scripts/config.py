@@ -18,6 +18,10 @@ HORSE_URL = HKJC_BASE + "/zh-hk/local/information/horse?HorseNo="
 TIPS_INDEX_URL = HKJC_BASE + "/racing/chinese/tipsindex/tips_index.asp"
 LOCAL_RESULTS_URL = HKJC_BASE + "/racing/information/Chinese/Racing/LocalResults.aspx"
 
+# HKJC 投注赔率页面 URL 模板
+# 格式：https://bet.hkjc.com/ch/racing/wp/{YYYY-MM-DD}/{VENUE}/{RACE_NO}
+BETTING_ODDS_URL_TEMPLATE = "https://bet.hkjc.com/ch/racing/wp/{date}/{venue}/{race_no}"
+
 # ==============================================================================
 # 缓存配置
 # ==============================================================================

@@ -13,7 +13,7 @@ import time
 import atexit
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
-from config import RACE_CARD_URL, TIPS_INDEX_URL, LOCAL_RESULTS_URL
+from config import RACE_CARD_URL, TIPS_INDEX_URL, LOCAL_RESULTS_URL, BETTING_ODDS_URL_TEMPLATE, CACHE_TTL
 from cache import _cache_get, _cache_set, _classify_url, _cache_path
 
 
@@ -211,7 +211,11 @@ def fetch_horse_history(horse_id: str, force_refresh: bool = False) -> dict:
     html = fetch_url(url, timeout=20, force_refresh=force_refresh)
     if not html:
         return {"current_rating": 40, "history": []}
-    return parse_horse_history(html)
+
+    # 解析并更新缓存（v1.4.8: 同时存储结构化数据）
+    parsed = parse_horse_history(html)
+    _cache_set(url, html, parsed=parsed)
+    return parsed
 
 
 # ==============================================================================
@@ -242,7 +246,14 @@ def fetch_race_results(date: str, venue: str = "ST", force_refresh: bool = False
     url = f"{LOCAL_RESULTS_URL}?MeetingDate={date_param}"
 
     html = fetch_url(url, timeout=20, force_refresh=force_refresh)
-    return html if html else ""
+    if not html:
+        return ""
+
+    # v1.4.8: 解析后同时缓存结构化数据（节省后续重复解析的开销）
+    from parse import parse_race_results
+    parsed = parse_race_results(html)
+    _cache_set(url, html, parsed=parsed)
+    return html
 
 
 # ==============================================================================
@@ -443,3 +454,122 @@ def _fetch_tips_index_static(url: str) -> dict:
     last_updated = time_m.group(1) if time_m else None
 
     return {"tips": tips, "race_info": race_info, "last_updated": last_updated}
+
+
+# ==============================================================================
+# 投注赔率
+# ==============================================================================
+
+def fetch_race_odds(
+    race_date: str,
+    venue: str,
+    race_no: int,
+    force_refresh: bool = False
+) -> dict:
+    """
+    抓取 HKJC 投注赔率页面并解析各投注方式的赔率数据。
+
+    URL 格式：https://bet.hkjc.com/ch/racing/wp/{YYYY-MM-DD}/{VENUE}/{RACE_NO}
+    例如：  https://bet.hkjc.com/ch/racing/wp/2026-04-06/ST/1
+
+    参数：
+        race_date    : 日期字符串，格式 YYYY/MM/DD（如 "2026/04/06"）
+        venue        : 场地代码，ST（沙田）或 HV（跑马地）
+        race_no      : 场次号
+        force_refresh: 忽略缓存强制重新抓取
+
+    返回结构：
+    {
+        "race_no": 1,
+        "venue": "ST",
+        "date": "2026-04-06",
+        "win":       {"#1": 8.5, "#2": 12.0, ...},           # 独赢赔率
+        "place":     {"#1": 2.8, "#2": 3.5, ...},           # 位置赔率
+        "quinella":  {"1,2": 45.0, "1,3": 52.0, ...},       # 连赢赔率
+        "trio":      {"1,2,3": 180.0, ...},                 # 三重彩赔率
+        "quinella_place": {"1,2": 18.0, ...},               # 位置Q赔率
+        "last_updated": "14:30",
+        "source":    "bet.hkjc.com",
+    }
+
+    注：若赛事未开盘（赛前），所有赔率字段为空字典 {}
+    """
+    # 日期格式转换 YYYY/MM/DD → YYYY-MM-DD
+    from datetime import datetime as _dt
+    try:
+        dt = _dt.strptime(race_date, "%Y/%m/%d")
+    except (ValueError, TypeError):
+        dt = _dt.now()
+    date_iso = dt.strftime("%Y-%m-%d")
+
+    url = BETTING_ODDS_URL_TEMPLATE.format(
+        date=date_iso,
+        venue=venue,
+        race_no=race_no
+    )
+
+    # 赔率页面使用独立缓存 key，避免与排位表混淆
+    odds_cache_url = f"odds_{date_iso}_{venue}_{race_no}"
+
+    # v1.4.8: 使用统一缓存接口，支持自定义 key 和结构化数据
+    if not force_refresh:
+        cached = _cache_get(url, cache_key=odds_cache_url)
+        if cached is not None:
+            # _cache_get 已处理 TTL，在 parsed 模式下直接返回结构化数据
+            if isinstance(cached, dict) and cached.get("status"):
+                print(f"  💾 缓存命中 [odds]: {url[:70]}...")
+                return cached
+
+    # 抓取 HTML
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "zh-HK,zh;q=0.9,en;q=0.8",
+        "Referer": "https://bet.hkjc.com/",
+    }
+
+    try:
+        req = Request(url, headers=headers)
+        with urlopen(req, timeout=20) as response:
+            html = response.read().decode("utf-8", errors="ignore")
+        print(f"  🌐 获取赔率页面: {url}")
+    except Exception as e:
+        print(f"  ⚠️  赔率页面抓取失败: {e}，返回空数据")
+        result = _empty_odds_result(race_no, venue, date_iso)
+        _save_odds_cache(odds_cache_url, result)
+        return result
+
+    # 解析赔率数据
+    from parse import parse_race_odds
+    result = parse_race_odds(html, race_no=race_no, venue=venue, date=date_iso)
+
+    # 写入缓存
+    _save_odds_cache(odds_cache_url, result)
+    return result
+
+
+def _empty_odds_result(race_no: int, venue: str, date: str) -> dict:
+    """返回空赔率数据结构（赛事未开盘或抓取失败时使用）"""
+    return {
+        "race_no": race_no,
+        "venue": venue,
+        "date": date,
+        "win": {},
+        "place": {},
+        "quinella": {},
+        "trio": {},
+        "quinella_place": {},
+        "last_updated": None,
+        "source": "bet.hkjc.com",
+        "status": "unavailable",
+    }
+
+
+def _save_odds_cache(cache_key: str, content: dict):
+    """
+    将赔率结果写入缓存文件（v1.4.8: 使用统一 _cache_set）。
+
+    赔率数据本身就是结构化 dict，直接作为 parsed 存储，
+    不再额外存储原始 HTML（赔率页面 JSON 无需保留原文）。
+    """
+    _cache_set(cache_key, "", parsed=content)
