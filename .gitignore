@@ -1,5 +1,8 @@
 ﻿.cache/
 .archive/
 .evolution/
+.backups/
+.codebuddy/
+.workbuddy/
 scripts/__pycache__/
 *.pyc
