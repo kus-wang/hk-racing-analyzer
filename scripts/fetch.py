@@ -10,6 +10,7 @@ import re
 import json
 import os
 import time
+import atexit
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
 from config import RACE_CARD_URL, TIPS_INDEX_URL
@@ -17,14 +18,88 @@ from cache import _cache_get, _cache_set, _classify_url
 
 
 # ==============================================================================
+# Playwright 单例管理（全局复用浏览器实例）
+# ==============================================================================
+
+class PlaywrightManager:
+    """
+    Playwright 单例管理器，避免重复启动/关闭浏览器实例。
+
+    使用方式：
+        browser, page = PlaywrightManager.get_page()
+        page.goto(url)
+        html = page.content()
+        # 不要关闭！由管理器统一管理生命周期
+    """
+    _instance = None
+    _browser = None
+    _playwright = None
+    _page_count = 0
+    _initialized = False
+
+    @classmethod
+    def _init(cls):
+        """初始化 Playwright（延迟加载，仅在首次使用时）"""
+        if cls._initialized:
+            return
+        try:
+            from playwright.sync_api import sync_playwright
+            cls._playwright = sync_playwright().start()
+            cls._browser = cls._playwright.chromium.launch(headless=True)
+            cls._initialized = True
+            print("  🚀 Playwright 浏览器实例已启动（全局复用）")
+            # 注册退出时清理
+            atexit.register(cls.cleanup)
+        except ImportError:
+            print("  ⚠️  Playwright 未安装")
+            raise
+
+    @classmethod
+    def get_browser(cls):
+        """获取浏览器实例"""
+        if not cls._initialized:
+            cls._init()
+        return cls._browser
+
+    @classmethod
+    def new_page(cls):
+        """创建新页面（复用浏览器实例）"""
+        browser = cls.get_browser()
+        if browser is None:
+            return None
+        page = browser.new_page()
+        cls._page_count += 1
+        return page
+
+    @classmethod
+    def cleanup(cls):
+        """清理 Playwright 资源（进程退出时自动调用）"""
+        if cls._browser:
+            try:
+                cls._browser.close()
+                print(f"  🔒 Playwright 浏览器实例已关闭（共创建 {cls._page_count} 个页面）")
+            except Exception:
+                pass
+            cls._browser = None
+        if cls._playwright:
+            try:
+                cls._playwright.stop()
+            except Exception:
+                pass
+            cls._playwright = None
+        cls._initialized = False
+
+
+# ==============================================================================
 # HTTP 请求
 # ==============================================================================
 
-def fetch_url(url, timeout=15, force_refresh=False):
+def fetch_url(url, timeout=15, force_refresh=False, max_retries=3):
     """
     抓取 URL 内容，自动读写磁盘缓存。
 
     force_refresh=True  → 跳过缓存，强制重新请求并刷新缓存。
+    max_retries         → 网络请求失败时的最大重试次数（默认3次）
     """
     # 1. 尝试读缓存
     if not force_refresh:
@@ -34,25 +109,37 @@ def fetch_url(url, timeout=15, force_refresh=False):
             print(f"  💾 缓存命中 [{ttl_key}]: {url[:80]}...")
             return cached
 
-    # 2. 发起网络请求
+    # 2. 发起网络请求（带重试机制）
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "zh-HK,zh;q=0.9,en;q=0.8",
         "Referer": "https://racing.hkjc.com/",
     }
-    try:
-        req = Request(url, headers=headers)
-        with urlopen(req, timeout=timeout) as response:
-            content = response.read().decode("utf-8", errors="ignore")
-        # 3. 写入缓存
-        _cache_set(url, content)
-        ttl_key = _classify_url(url)
-        print(f"  🌐 网络请求 [{ttl_key}]: {url[:80]}...")
-        return content
-    except (URLError, HTTPError) as e:
-        print(f"  ⚠️  抓取失败 {url}: {e}")
-        return None
+
+    last_error = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            req = Request(url, headers=headers)
+            with urlopen(req, timeout=timeout) as response:
+                content = response.read().decode("utf-8", errors="ignore")
+            # 3. 写入缓存
+            _cache_set(url, content)
+            ttl_key = _classify_url(url)
+            if attempt > 1:
+                print(f"  🌐 网络请求 [第{attempt}次重试成功, {ttl_key}]: {url[:80]}...")
+            else:
+                print(f"  🌐 网络请求 [{ttl_key}]: {url[:80]}...")
+            return content
+        except (URLError, HTTPError) as e:
+            last_error = e
+            if attempt < max_retries:
+                wait_time = 2 ** (attempt - 1)  # 指数退避: 1s, 2s, 4s
+                print(f"  ⚠️  抓取失败 [第{attempt}次]: {url[:60]}... ({e})，{wait_time}秒后重试...")
+                time.sleep(wait_time)
+            else:
+                print(f"  ⚠️  抓取失败 [已重试{max_retries}次]: {url[:60]}... ({e})")
+                return None
 
 
 def fetch_url_with_playwright(url, timeout=30, force_refresh=False):
@@ -65,6 +152,8 @@ def fetch_url_with_playwright(url, timeout=30, force_refresh=False):
 
     返回：
         HTML 字符串，或 None（失败时）
+
+    注意：浏览器实例全局复用，无需手动关闭页面。
     """
     # 尝试读缓存
     if not force_refresh:
@@ -74,19 +163,15 @@ def fetch_url_with_playwright(url, timeout=30, force_refresh=False):
             return cached
 
     try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        print("  ⚠️  Playwright 未安装，回退到普通 fetch")
-        return fetch_url(url, timeout=timeout, force_refresh=force_refresh)
+        page = PlaywrightManager.new_page()
+        if page is None:
+            print("  ⚠️  Playwright 不可用，回退到普通 fetch")
+            return fetch_url(url, timeout=timeout, force_refresh=force_refresh)
 
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.goto(url, timeout=timeout * 1000)
-            page.wait_for_timeout(5000)  # 等待 JS 执行
-            html = page.content()
-            browser.close()
+        page.goto(url, timeout=timeout * 1000)
+        page.wait_for_timeout(5000)  # 等待 JS 执行
+        html = page.content()
+        # 注意：不关闭页面，由管理器统一复用
 
         print(f"  🌐 Playwright 获取 [racecard]: {url[:80]}...")
 
@@ -175,22 +260,15 @@ def fetch_tips_index(force_refresh: bool = False) -> dict:
             pass
 
     try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        print("  ⚠️  Playwright 未安装，使用静态解析方式")
-        return _fetch_tips_index_static(url)
+        page = PlaywrightManager.new_page()
+        if page is None:
+            print("  ⚠️  Playwright 不可用，使用静态解析方式")
+            return _fetch_tips_index_static(url)
 
-    tips = {}
-    race_info = {}
-
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.goto(url, timeout=30000)
-            page.wait_for_timeout(3000)  # 等待 JS 执行
-            html = page.content()
-            browser.close()
+        page.goto(url, timeout=30000)
+        page.wait_for_timeout(3000)  # 等待 JS 执行
+        html = page.content()
+        # 注意：不关闭页面，由管理器统一复用
 
         print(f"  🌐 Playwright 获取 [tips_index]: {url[:60]}...")
 

@@ -206,18 +206,17 @@ def parse_race_entries(html, race_no=None):
       [0]马号  [1]历史走位  [2]马名(链接)  [3]烙号  [4]负磅
       [5]骑师  [6]档位  [7]练马师  [8-9]评分变化  [10]当前评分
       ... 其余数据
-    - 后备马：结构不同（TD 数较少），须排除
+    - 后备马：结构不同（TD 数较少），但也需解析
 
-    关键修复（2026-03-31）：
+    关键修复（2026-04-02）：
     1. 使用 Playwright 获取动态渲染的 HTML
     2. TR 匹配使用更宽松的模式：同时包含 f_tac 和 f_fs13 class
-    3. 排除后备马：后备马的 TD 数较少（通常10个）
+    3. 解析所有马（包含后备马），通过 is_reserve 字段区分
     """
     horses = []
     seen_ids = set()
 
-    # 匹配包含 f_tac 和 f_fs13 的 TR（正选马）
-    # 注意：class 顺序可能是 f_tac f_fs13 或 f_fs13 f_tac
+    # 匹配包含 f_tac 和 f_fs13 的 TR（正选马 + 后备马）
     tr_pattern = re.compile(
         r'<tr[^>]*class="[^"]*f_tac[^"]*f_fs13[^"]*"[^>]*>(.*?)</tr>',
         re.DOTALL | re.IGNORECASE
@@ -235,9 +234,8 @@ def parse_race_entries(html, race_no=None):
         tds = td_pattern.findall(tr_content)
         td_count = len(tds)
 
-        # 排除后备马：后备马的 TD 数通常少于 12 个
-        if td_count < 12:
-            continue
+        # 判断是否后备马：后备马通常 td_count < 12 或包含特定标记
+        is_reserve = td_count < 12
 
         # 提取数据
         def clean_td(td_html):
@@ -287,9 +285,10 @@ def parse_race_entries(html, race_no=None):
         except (ValueError, IndexError):
             weight = 0
 
-        # TD[6] = 档位
+        # TD[6] = 档位（后备马通常没有档位）
         try:
-            barrier = int(get_td(6, "0").strip())
+            barrier_str = get_td(6, "0").strip()
+            barrier = int(re.sub(r'[^\d]', '', barrier_str)) if barrier_str and re.sub(r'[^\d]', '', barrier_str) else 0
         except (ValueError, IndexError):
             barrier = 0
 
@@ -311,6 +310,7 @@ def parse_race_entries(html, race_no=None):
             "trainer_code": trainer,
             "weight": weight,
             "current_rating": current_rating,
+            "is_reserve": is_reserve,  # 标记是否为后备马
             "final_odds": None,
             "opening_odds": None,
             "tips_index": None,  # HKJC 官方贴士指数原始值
@@ -333,3 +333,60 @@ def parse_race_entries(html, race_no=None):
         })
 
     return horses
+
+
+def validate_race_entries(horses, race_no=None):
+    """
+    验证解析结果的完整性，提前发现页面结构变更。
+
+    检查项：
+    1. 正选马数量是否正常（通常 10-12 匹）
+    2. 必需字段是否完整（id/name/no/current_rating）
+    3. 马号/评分是否有异常值
+
+    返回：(is_valid, warnings) 元组
+    """
+    warnings = []
+    is_valid = True
+
+    if not horses:
+        warnings.append("未解析出任何马匹，可能页面结构已变更")
+        return False, warnings
+
+    # 分离正选和后备马
+    regular_horses = [h for h in horses if not h.get("is_reserve", False)]
+
+    # 检查正选马数量
+    if len(regular_horses) < 10:
+        warnings.append(f"正选马数量异常少（{len(regular_horses)} 匹），页面结构可能已变更")
+        is_valid = False
+
+    # 检查必需字段
+    required_fields = ["id", "name", "no", "current_rating"]
+    missing_fields_horses = []
+
+    for horse in horses:
+        missing = [f for f in required_fields if not horse.get(f)]
+        if missing:
+            missing_fields_horses.append(f"#{horse.get('no', '?')}: {', '.join(missing)}")
+
+    if missing_fields_horses:
+        warnings.append(f"部分马匹缺少必需字段: {missing_fields_horses[:3]}")
+        is_valid = False
+
+    # 检查马号连续性
+    horse_numbers = sorted([h.get("no", 0) for h in horses if h.get("no", 0) > 0])
+    if horse_numbers:
+        expected = list(range(horse_numbers[0], horse_numbers[0] + len(horse_numbers)))
+        if horse_numbers != expected:
+            warnings.append(f"马号可能不连续: {horse_numbers}")
+
+    # 检查评分范围
+    ratings = [h.get("current_rating", 0) for h in horses if h.get("current_rating", 0) > 0]
+    if ratings:
+        min_r, max_r = min(ratings), max(ratings)
+        if max_r - min_r > 80:
+            warnings.append(f"评分跨度异常大（{min_r}-{max_r}），可能解析有误")
+            is_valid = False
+
+    return is_valid, warnings

@@ -46,7 +46,8 @@ python scripts/analyze_race.py --cache-stats
 
 | 功能 / Feature | 描述 / Description |
 |----------------|---------------------|
-| **多维度分析 / Multi-dimensional** | 8个加权维度：历史(31%)、赔率(28%)、配速(10%)、骑师(5%)、练马师(4%)、档位(5%)、贴士指数(6%)、专家共识(4%) |
+| **多维度分析 / Multi-dimensional** | 8个加权维度：历史(33%)、赔率(30%)、配速(10%)、骑师(5%)、练马师(4%)、档位(5%)、贴士指数(6%)、专家共识(4%) |
+| **后备马信息 / Reserve Horses** | 正选退赛时后备马自动递补，信息完整展示于分析报告中 |
 | **HKJC 实时数据 / Real-time Data** | 抓取官方 HKJC 页面 — 排位表、赔率、赛果、马匹档案 |
 | **智能缓存 / Smart Caching** | 分层 TTL (5分钟–7天)，避免重复请求 |
 | **每日自动化 / Daily Automation** | 14:30 预测，23:30 回测 |
@@ -90,6 +91,7 @@ hk-racing-analyzer/
 | 当日排位表 / Race card | 30 分钟 / min | 可能换马/骑师 / May change |
 | 马匹历史 / Horse history | 24 小时 / hrs | 每场赛后更新 / Updated after race |
 | 赔率数据 / Odds data | 5 分钟 / min | 临场实时变化 / Real-time |
+| 贴士指数 / Tips index | 30 分钟 / min | 每场赛前更新 / Updated before each race |
 
 ---
 
@@ -155,8 +157,8 @@ hk-racing-analyzer/
 
 | 版本 / Version | 日期 / Date | 主要更新 / Main Changes |
 |---------------|-------------|------------------------|
-| [v1.4.4](RELEASE_NOTES.md#v144--2026-04-02) | 2026-04-02 | 投注建议模块重构：AI自主判断投注类型 / Betting module refactor: AI-powered bet type selection |
-| [v1.4.3](RELEASE_NOTES.md#v143--2026-04-02) | 2026-04-02 | 进化建议全量应用：温度参数、权重调整、时间衰减 / Evolution suggestions applied: temp, weights, time decay |
+| [v1.4.6](RELEASE_NOTES.md#v146--2026-04-03) | 2026-04-03 | 后备马解析与展示：正选退赛时后备马自动递补，展示于报告中（不参与预测评分）/ Reserve horse parsing & display: emergency horses shown in report |
+| [v1.4.5](RELEASE_NOTES.md#v145--2026-04-03) | 2026-04-03 | Playwright单例复用+并行历史抓取(8线程)；中文condition参数；动态班次推断；权重优化(历史33%/赔率30%/配速10%) / Playwright singleton + parallel history fetch; Chinese condition input; dynamic class inference; weight optimization |
 | [v1.4.2](RELEASE_NOTES.md#v142--2026-04-01) | 2026-04-01 | 回测时间改为 23:30 / Backtest time changed to 23:30；新增预测存档归档隔离 / Archive isolation |
 | [v1.4.1](RELEASE_NOTES.md#v141--2026-03-31) | 2026-03-31 | 新增 HKJC 贴士指数 / Added Tips Index |
 | [v1.4.0](RELEASE_NOTES.md#v140--2026-03-31) | 2026-03-31 | 模块化重构：拆分为10个独立模块 / Modular refactor into 10 modules |

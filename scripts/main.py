@@ -10,8 +10,10 @@ import sys
 import io
 import json
 import argparse
+import time
 from datetime import datetime
 from urllib.parse import quote
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Windows PowerShell 下强制 UTF-8 输出，避免 emoji 编码报错
 if sys.platform == "win32":
@@ -23,7 +25,7 @@ from weights import get_weights
 from probability import softmax_probability
 from cache import cache_stats, cache_clear
 from fetch import fetch_url_with_playwright, fetch_tips_index, fetch_horse_history
-from parse import parse_race_entries
+from parse import parse_race_entries, validate_race_entries
 from scoring import calculate_total_score
 from output import format_markdown_output
 
@@ -43,8 +45,7 @@ def parse_args():
                         choices=["turf", "dirt"],
                         help="赛道类型: turf/草地 或 dirt/泥地")
     parser.add_argument("--condition", type=str, default="good",
-                        choices=["fast", "good_to_firm", "good", "yielding", "soft"],
-                        help="场地状况")
+                        help="场地状况 (fast/good_to_firm/good/yielding/soft 或中文: 快/好地快/好/略黏/黏)")
     parser.add_argument("--scenario", type=str, default="normal",
                         choices=["normal", "newcomer", "class_down", "class_up"],
                         help="赛事场景")
@@ -69,8 +70,186 @@ def normalize_venue(venue):
     return venue
 
 
+def normalize_condition(condition):
+    """将中文或英文场地状况转换为规范英文值"""
+    if not condition:
+        return "good"
+
+    condition_lower = condition.lower().strip()
+
+    # 中文映射
+    condition_map = {
+        "快": "fast",
+        "好地快": "good_to_firm",
+        "快地": "good_to_firm",
+        "好": "good",
+        "略黏": "yielding",
+        "黏": "soft",
+        "湿慢": "soft",
+        "濕慢": "soft",
+    }
+
+    # 如果是中文
+    if condition in condition_map:
+        return condition_map[condition]
+
+    # 如果已经是英文规范值，直接返回
+    valid_conditions = ["fast", "good_to_firm", "good", "yielding", "soft"]
+    if condition_lower in valid_conditions:
+        return condition_lower
+
+    # 默认值
+    return "good"
+
+
 def get_today_date():
     return datetime.now().strftime("%Y/%m/%d")
+
+
+def _fetch_single_horse_history(horse, venue, distance, force_refresh):
+    """
+    并行抓取单匹马历史战绩（供 ThreadPoolExecutor 调用）。
+
+    返回：(horse_id, hist_data) 元组
+    """
+    horse_id = horse.get("id", "")
+    if not horse_id:
+        return (horse_id, {"history": [], "current_rating": 40})
+
+    hist_data = fetch_horse_history(horse_id, force_refresh=force_refresh)
+    return (horse_id, hist_data)
+
+
+def infer_class_range(horses):
+    """
+    根据参赛马的评分分布，动态推断赛事班次区间。
+
+    香港赛马班次结构（经验规律）：
+        第4班：40分或以下
+        第3班：41-60分
+        第2班：61-80分
+        第1班：81分或以上
+
+    推断逻辑：
+    1. 找到所有马的最高评分和最低评分
+    2. 参考常见班次边界，推断班次区间
+    3. 设置 class_ceiling 和 class_floor
+
+    返回：更新后的 horses 列表
+    """
+    if not horses:
+        return horses
+
+    ratings = [h.get("current_rating", 40) for h in horses]
+    min_rating = min(ratings) if ratings else 40
+    max_rating = max(ratings) if ratings else 40
+
+    if max_rating <= 40:
+        class_floor = 0
+        class_ceiling = 40
+        class_name = "4"
+    elif max_rating <= 52:
+        if min_rating <= 40:
+            class_floor = 0
+            class_ceiling = max(40, max_rating + 5)
+            class_name = "3/4"
+        else:
+            class_floor = 35
+            class_ceiling = max_rating + 5
+            class_name = "3"
+    elif max_rating <= 65:
+        class_floor = 35
+        class_ceiling = max_rating + 5
+        class_name = "2/3"
+    elif max_rating <= 80:
+        class_floor = 55
+        class_ceiling = max_rating + 5
+        class_name = "2"
+    else:
+        class_floor = 75
+        class_ceiling = max_rating + 5
+        class_name = "1"
+
+    class_ceiling = min(class_ceiling, 120)
+    class_floor = max(class_floor, 0)
+
+    for horse in horses:
+        horse["class_ceiling"] = class_ceiling
+        horse["class_floor"] = class_floor
+        horse["class_name"] = class_name
+
+    avg_rating = sum(ratings) / len(ratings) if ratings else 40
+    print(f"  Class Range: {class_name} | Rating: {class_floor}-{class_ceiling} | Min/Max/Avg: {min_rating}/{max_rating}/{avg_rating:.1f}")
+
+    return horses
+
+
+def fetch_all_horse_history(horses, venue, distance, force_refresh, max_workers=8):
+    """
+    并行抓取所有马匹历史战绩。
+
+    参数：
+        horses       : 马匹列表
+        venue        : 场地代码
+        distance     : 赛事距离
+        force_refresh: 是否强制刷新
+        max_workers  : 最大并行线程数
+
+    返回：更新后的马匹列表
+    """
+    total = len(horses)
+    start_time = time.time()
+    completed = 0
+    failed_ids = []
+
+    print(f"\n📚 正在并行抓取 {total} 匹参赛马匹的历史战绩（{max_workers} 线程）...")
+
+    # 建立 horse_id -> horse 索引
+    horse_map = {h.get("id", ""): h for h in horses}
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # 提交所有任务
+        future_to_horse = {
+            executor.submit(
+                _fetch_single_horse_history,
+                horse,
+                venue,
+                distance,
+                force_refresh
+            ): horse
+            for horse in horses
+        }
+
+        # 收集结果
+        for future in as_completed(future_to_horse):
+            completed += 1
+            horse_id, hist_data = future.result()
+
+            if horse_id and horse_id in horse_map:
+                horse = horse_map[horse_id]
+                horse["history"] = hist_data.get("history", [])
+                horse["current_rating"] = hist_data.get("current_rating", 40)
+
+                # 进度输出（每完成一个就更新）
+                h_count = len(horse["history"])
+                same_cond = sum(
+                    1 for r in horse["history"]
+                    if r.get("venue") == venue and abs(r.get("distance", 0) - distance) <= 200
+                )
+                print(
+                    f"  [{completed:2d}/{total}] ✅ {horse['name']} "
+                    f"({h_count}场历史, 评分{horse['current_rating']})"
+                )
+            else:
+                failed_ids.append(horse_id)
+                print(f"  [{completed:2d}/{total}] ❌ 抓取失败")
+
+    elapsed = time.time() - start_time
+    print(f"\n⏱️  历史战绩抓取完成: {completed} 匹 / 耗时 {elapsed:.1f}秒")
+    if failed_ids:
+        print(f"   失败马匹: {', '.join(failed_ids)}")
+
+    return horses
 
 
 def main():
@@ -95,7 +274,7 @@ def main():
     race_no = args.race
     distance = args.distance
     track_type = args.track
-    track_condition = args.condition
+    track_condition = normalize_condition(args.condition)
     scenario = args.scenario
     force_refresh = args.force_refresh
 
@@ -129,12 +308,29 @@ def main():
         print("❌ 无法获取赛事数据，请检查日期/场地/场次是否正确。")
         return
 
-    # 解析参赛马匹
-    horses = parse_race_entries(html, race_no=race_no)
-    if not horses:
+    # 解析参赛马匹（包含正选马 + 后备马）
+    all_horses = parse_race_entries(html, race_no=race_no)
+    if not all_horses:
         print("⚠️  未能解析出参赛马匹，页面结构可能已变更。")
         return
-    print(f"✅ 找到 {len(horses)} 匹参赛马匹")
+
+    # 分离正选马和后备马
+    regular_horses = [h for h in all_horses if not h.get("is_reserve", False)]
+    reserve_horses = [h for h in all_horses if h.get("is_reserve", False)]
+
+    print(f"✅ 找到 {len(all_horses)} 匹参赛马匹（正选 {len(regular_horses)} 匹，后备 {len(reserve_horses)} 匹）")
+
+    # 验证正选马数量
+    if len(regular_horses) < 10:
+        print(f"⚠️  正选马数量异常少（{len(regular_horses)} 匹），页面结构可能已变更")
+
+    # 打印后备马信息
+    if reserve_horses:
+        reserve_names = [f"#{h['no']} {h['name']}" for h in reserve_horses]
+        print(f"📋 后备马（正选退赛时递补）: {', '.join(reserve_names)}")
+
+    # 动态推断班次区间（基于正选马）
+    regular_horses = infer_class_range(regular_horses)
 
     # ── 抓取 HKJC 官方贴士指数 ─────────────────────────────────
     print(f"\n📊 正在抓取 HKJC 官方贴士指数...")
@@ -152,52 +348,40 @@ def main():
         print("⚠️  未获取到贴士数据（可能页面结构变更或网络问题）")
     print()
 
-    # ── 抓取每匹马历史战绩（带缓存，一次性批量）──────────────────
-    print(f"\n📚 正在抓取 {len(horses)} 匹参赛马匹的历史战绩...")
-    for i, horse in enumerate(horses, 1):
-        horse_id = horse.get("id", "")
-        if not horse_id:
-            continue
-        print(f"  [{i:2d}/{len(horses)}] {horse['name']} ({horse_id})")
-        hist_data = fetch_horse_history(horse_id, force_refresh=force_refresh)
-        horse["history"] = hist_data.get("history", [])
-        horse["current_rating"] = hist_data.get("current_rating", 40)
-        # 简短摘要
-        h_count = len(horse["history"])
-        same_cond = sum(
-            1 for r in horse["history"]
-            if r.get("venue") == venue and abs(r.get("distance", 0) - distance) <= 200
-        )
-        if h_count > 0:
-            print(f"         历史共 {h_count} 场，同条件 {same_cond} 场，当前评分 {horse['current_rating']}")
-        else:
-            print(f"         暂无历史战绩")
-    print()
+    # ── 并行抓取每匹正选马历史战绩 ─────────────────────────────────
+    regular_horses = fetch_all_horse_history(
+        regular_horses,
+        venue=venue,
+        distance=distance,
+        force_refresh=force_refresh,
+        max_workers=8  # 并行8个线程
+    )
 
     # ── 导入 analyze_horse（避免循环导入）───────────────────────
     from analyze import analyze_horse
 
     # 各维度评分（传入贴士指数数据）
-    for horse in horses:
+    for horse in regular_horses:
         horse = analyze_horse(horse, venue, distance, track_condition, tips_data=tips_data)
         horse["total_score"] = calculate_total_score(horse, weights)
 
     # 概率计算（Softmax + 上限约束）
-    scores = [h["total_score"] for h in horses]
+    scores = [h["total_score"] for h in regular_horses]
     probs = softmax_probability(scores)
-    for horse, prob in zip(horses, probs):
+    for horse, prob in zip(regular_horses, probs):
         horse["probability"] = prob
 
-    # 输出结果
+    # 输出结果（包含后备马作为信息参考）
     race_info = {"date": race_date, "venue": venue, "race": race_no}
 
     if args.output == "markdown":
-        print("\n" + format_markdown_output(race_info, horses))
+        print("\n" + format_markdown_output(race_info, regular_horses, reserve_horses=reserve_horses))
     else:
         print(json.dumps({
             "race_info": race_info,
             "weights_used": weights,
-            "horses": horses,
+            "regular_horses": regular_horses,  # 正选马预测结果
+            "reserve_horses": reserve_horses,  # 后备马信息（仅基本信息）
         }, ensure_ascii=False, indent=2))
 
 

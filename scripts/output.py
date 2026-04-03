@@ -9,8 +9,14 @@ HKJC 赛马分析工具 - 输出格式化模块
 from datetime import datetime
 
 
-def format_markdown_output(race_info, horses):
-    """生成 Markdown 格式分析报告（含历史战绩摘要与分项评分）"""
+def format_markdown_output(race_info, horses, reserve_horses=None):
+    """生成 Markdown 格式分析报告（含历史战绩摘要与分项评分）
+
+    参数：
+        race_info       : 赛事信息字典
+        horses          : 正选马列表（已评分）
+        reserve_horses  : 后备马列表（基本信息，不评分）
+    """
     venue_name = "沙田" if race_info["venue"] == "ST" else "跑马地"
     lines = []
 
@@ -89,6 +95,17 @@ def format_markdown_output(race_info, horses):
                 f"- **{h['no']}号 {h['name']}**（赔率 {h.get('final_odds', '-')}）："
                 f"有同条件前3记录，赔率未拉长，班次适配度 {h['class_fit_score']}"
             )
+
+    # ── 后备马信息 ────────────────────────────────────────────────
+    if reserve_horses:
+        lines.append("\n### 📋 后备马（正选退赛时递补）\n")
+        lines.append("| 马号 | 马名 | 评分 | 练马师 |")
+        lines.append("|:--:|:--|:--:|:--|")
+        for h in reserve_horses:
+            lines.append(
+                f"| {h['no']} | {h['name']} | {h.get('current_rating', '-')} | {h.get('trainer', '-')} |"
+            )
+        lines.append("\n> ⚠️ 后备马不参与预测评分，仅作信息参考。若正选马退赛，后备马将递补参与竞猜。")
 
     # ── 投注建议 ──────────────────────────────────────────────────
     # 投注判断逻辑见 SKILL.md（AI 根据概率分布自主推荐）

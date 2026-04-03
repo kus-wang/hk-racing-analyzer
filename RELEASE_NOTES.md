@@ -4,6 +4,60 @@
 
 ---
 
+## v1.4.6 — 2026-04-03
+
+### 📋 后备马信息解析与展示
+
+**背景**：香港赛马赛事通常包含 12 匹正选马 + 2 匹后备马（Emergency），正选退赛时由后备递补。
+
+#### 解析层（`parse.py`）
+- `parse_race_entries()` 改为保留后备马，通过 `is_reserve=True` 标记（原版直接过滤）
+- 新增 `validate_race_entries()` 函数：验证解析结果完整性（数量/字段/马号/评分范围）
+- `barrier` 解析增强：改用 `re.sub(r'[^\d]', '', ...)` 兼容含特殊字符的档位值
+
+#### 业务层（`main.py`）
+- 新增正选马 / 后备马分离逻辑，班次推断和历史抓取仅针对正选马
+- 后备马不参与评分，仅作替补递补信息参考
+
+#### 展示层（`output.py`）
+- `format_markdown_output()` 新增 `reserve_horses` 参数，输出后备马信息表格
+- 显示后备马马号、马名、评分、练马师，附注说明不参与预测评分
+
+**效果**：后备马信息现已在分析报告中可见，防止遗漏替补情况。
+
+---
+
+## v1.4.5 — 2026-04-03
+
+### 🚀 性能优化：Playwright 单例复用 + 并行历史抓取
+
+#### Playwright 单例管理器（`fetch.py`）
+- 新增 `PlaywrightManager` 类，全局复用浏览器实例，避免每次抓取重复启动/关闭 Chromium
+- 进程退出时通过 `atexit` 自动清理资源
+- `fetch_url()` 新增 `max_retries` 参数（默认3次），支持指数退避重试（1s/2s/4s）
+- 新增 `import atexit` 依赖
+
+#### 并行历史战绩抓取（`main.py`）
+- 新增 `fetch_all_horse_history()` 函数，使用 `ThreadPoolExecutor` 并行抓取（默认8线程），大幅缩短预测总耗时
+- 新增 `_fetch_single_horse_history()` 单匹马抓取包装函数
+- 抓取进度实时打印（含马名、历史场数、当前评分）
+- 新增 `import time` / `from concurrent.futures import ThreadPoolExecutor, as_completed`
+
+#### 中文场地条件支持（`main.py`）
+- 新增 `normalize_condition()` 函数：`--condition` 参数现支持中文（快/好地快/好/略黏/黏）
+- 原 `choices=["fast", ...]` 限制移除，改为自由字符串输入（中文/英文均可）
+
+#### 动态班次区间推断（`main.py`）
+- 新增 `infer_class_range()` 函数：根据全场参赛马评分分布自动推断班次区间
+- 替代原有硬编码默认值，`class_ceiling`/`class_floor` 更贴近实际赛事班次
+- 已知问题「班次区间未按实际班次自动设置」已修复
+
+**效果**：历史抓取时间预计从 ~120s（顺序）降至 ~20s（8线程并行）
+
+**同步更新**：`RELEASE_NOTES.md` 已知问题表格中"班次区间"和"`--condition` 不支持中文"标记为 v1.4.5 已修复
+
+---
+
 ## v1.4.4 — 2026-04-02
 
 ### 💰 投注建议模块重构（AI 自主判断）
@@ -284,7 +338,7 @@
 |--------|------|------|
 | 🟡 中 | 配速评分仅使用跑法推导，pace_index 无实测数据 | 15%权重基于推断，待接入分段时间数据 |
 | 🟡 中 | 历史战绩无时间衰减 | 近期与6个月前的成绩等权，待加权优化 |
-| 🟡 中 | 班次区间未按实际班次自动设置 | `class_ceiling/class_floor` 当前使用硬编码默认值 |
+| ~~🟡 中~~ | ~~班次区间未按实际班次自动设置~~ | ✅ v1.4.5 已修复：`infer_class_range()` 动态推断 |
 | 🟢 低 | 实时赔率接入暂搁置 | HKJC新版网站API路径未稳定，待确认后接入 |
-| 🟢 低 | `--condition` 不支持中文输入 | 目前需手动输入英文（fast/good等） |
+| ~~🟢 低~~ | ~~`--condition` 不支持中文输入~~ | ✅ v1.4.5 已修复：`normalize_condition()` 支持中文 |
 | 🟢 低 | `dump_race.py` 路径硬编码 | 调试脚本，路径改为相对路径更规范 |
