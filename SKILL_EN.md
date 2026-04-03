@@ -16,58 +16,37 @@ Data-driven horse racing prediction tool combining historical data analysis with
 
 ## Analysis Dimensions
 
-### Primary Dimensions (Higher Weight)
+### Primary Dimensions
 
-| Dimension | Data Source | Analysis Points | Weight |
-|-----------|-------------|-----------------|--------|
-| **History — Same Condition** | HKJC Horse Profile | Last 5 races at same distance + same venue (time-decayed: 30d×1.0, 31-90d×0.8, 91-180d×0.6, >180d×0.4) | **16%** |
-| **History — Same Venue** | HKJC Horse Profile | Last 5 races at same venue (any distance, time-decayed) | **18%** |
-| **Class Fit** | Race Entry | Rating vs. class ceiling/floor | **8%** |
-| **Odds Value** | HKJC Odds Page | Absolute final odds | **15%** |
-| **Odds Drift** | HKJC Odds Page | Opening → final odds movement (shortening = strong signal) | **15%** |
-| **Sectional / Pace Index** | HKJC Results | Running style derived from historical position calls | **10%** |
+| Dimension | Data Source | Analysis Points |
+|-----------|-------------|-----------------|
+| **History — Same Condition** | HKJC Horse Profile | Last 5 races at same distance + same venue (time-decayed) |
+| **History — Same Venue** | HKJC Horse Profile | Last 5 races at same venue (any distance, time-decayed) |
+| **Class Fit** | Race Entry | Rating vs. class ceiling/floor |
+| **Odds Value** | HKJC Odds Page | Absolute final odds |
+| **Odds Drift** | HKJC Odds Page | Opening → final odds movement (shortening = strong signal) |
+| **Sectional / Pace Index** | HKJC Results | Running style derived from historical position calls |
 
-### Secondary Dimensions (Lower Weight — Supporting Signals)
+### Secondary Dimensions
 
-| Dimension | Data Source | Analysis Points | Weight |
-|-----------|-------------|-----------------|--------|
-| **HKJC Tips Index** | HKJC Official Tips Index Page | Official daily tips (>100 hot, <100 cold) | **6%** |
-| Jockey | Horse history (dynamic) | Win/top-3 rate of this jockey on this horse | **5%** |
-| Trainer | Horse history (dynamic) | Win/top-3 rate of this trainer with this horse | **4%** |
-| Barrier | Historical stats | Barrier win rate at same distance (ST/HV) | **5%** |
-| Track Preference | Horse Profile | Turf/Dirt, Good/Fast performance (included in same-condition history) | — |
-| Weight/Body Weight | Race Data | Weight carried changes, body weight trends (planned) | — |
+| Dimension | Data Source | Analysis Points |
+|-----------|-------------|-----------------|
+| **HKJC Tips Index** | HKJC Official Tips Index Page | Official daily tips (>100 hot, <100 cold) |
+| Jockey | Horse history (dynamic) | Win/top-3 rate of this jockey on this horse |
+| Trainer | Horse history (dynamic) | Win/top-3 rate of this trainer with this horse |
+| Barrier | Historical stats | Barrier win rate at same distance (ST/HV) |
+| Track Preference | Horse Profile | Turf/Dirt, Good/Fast performance (included in same-condition history) |
+| Weight/Body Weight | Race Data | Weight carried changes, body weight trends (planned) |
 
-> **Note on Jockey/Trainer scoring**: No longer a fixed value of 50. Dynamically computed from the horse's own race history. See `references/analysis_weights.md` for the full scoring rubric.
+> Jockey/Trainer weights are dynamically computed by `weights.py` based on venue/distance/class — no fixed values needed. See `references/analysis_weights.md` for the scoring rubric.
 
-### External Reference (Supplementary)
+### External Reference (Optional)
 
-| Dimension | Data Source | Analysis Points | Weight |
-|-----------|-------------|-----------------|--------|
-| **Expert Predictions** | Web Search | Professional racing commentators' consensus | **4%** |
+Use `web_search` to search expert tips as supplementary reference.
 
-#### How to Obtain Expert Predictions
+Search: `"Sha Tin racing race X prediction"` / `"Happy Valley tonight tips"`
 
-Use the `web_search` tool:
-
-```
-Search Keywords:
-- "Sha Tin racing race X prediction"
-- "Happy Valley tonight racing tips"
-- "HKJC horse racing analysis"
-- "racing expert picks"
-```
-
-Expert Prediction Integration:
-1. Search multiple expert sources
-2. Extract hot picks from each expert
-3. Calculate consensus ratio (experts recommending this horse ÷ total experts)
-4. Apply as supplementary signal at ~4% weight
-
-Notes:
-- Expert predictions are reference only; never follow blindly
-- Prefer data-backed expert analysis over pure opinion
-- Discount extreme optimism/pessimism
+> Expert predictions are reference only; prefer data-backed analysis over pure opinion.
 
 ---
 
@@ -133,65 +112,19 @@ Cache location:
 
 ### Step 3: Data Analysis
 
-#### A. Local Data Analysis
+Run `scripts/analyze_race.py`:
 
 ```bash
-# Analyze Sha Tin race 3 today (auto-caches on first run)
-python scripts/analyze_race.py --venue ST --race 3
-
-# Analyze specific date, Happy Valley race 5
-python scripts/analyze_race.py --date 2026/03/30 --venue HV --race 5
-
-# Scenario mode: newcomer / class_down / class_up / normal
-python scripts/analyze_race.py --venue ST --race 3 --scenario class_down
-
-# Force refresh — bypass cache (use ~30 min before post)
-python scripts/analyze_race.py --venue ST --race 3 --force-refresh
-
-# Clear cache for this race then re-analyze
-python scripts/analyze_race.py --venue ST --race 3 --clear-cache
-
-# Show cache statistics
-python scripts/analyze_race.py --cache-stats
+python scripts/analyze_race.py --date YYYY/MM/DD --venue ST/HV --race N
 ```
 
-The script will:
-1. Check disk cache first; fetch from network only on cache miss / expiry
-2. Scrape race card (horse list, draw, weight, jockey, trainer)
-3. Infer class range dynamically (Class 4/3/2/1 based on horse ratings)
-4. Fetch HKJC official tips index
-5. Parallel-fetch each horse's historical performance (8 threads, ~30 seconds)
-6. Get odds data
-7. Calculate multi-dimensional scores → Softmax probability → top-3 prediction
+The script automatically:
+1. Fetches race card and horse list
+2. Parallel-fetches each horse's historical performance (~8 threads)
+3. Gets odds data
+4. Calculates multi-dimensional scores → Softmax probability → top-3 prediction
 
-#### B. Expert Prediction (Optional)
-
-```bash
-web_search "Sha Tin racing race 3 prediction March 2026"
-web_search "Happy Valley tonight racing tips"
-```
-
-#### C. Final Score Formula
-
-```
-Final Score = Local Analysis Score × 96% + Expert Consensus Score × 4%
-```
-> Local Analysis Score = weighted sum of 8 dimensions (see weight table above).
-> Expert Consensus Score = number of experts recommending this horse ÷ total experts, scaled to 0-100.
-> Softmax temperature = 2.0 (reduced from 1.5 to lower extreme predictions; applied during probability normalization).
-
-#### D. Race Scenario Mode
-
-The script auto-adjusts weights for different race types:
-
-| Scenario | Parameter | Notes |
-|----------|-----------|-------|
-| Normal | `--scenario normal` | Default weights |
-| Newcomer | `--scenario newcomer` | No history available; expert weight=0 |
-| Class Down | `--scenario class_down` | Dropped-class horses; expert weight=0 |
-| Class Up | `--scenario class_up` | Raised-class horses; expert weight=0 |
-
-> Expert weight is automatically set to 0 in `newcomer` / `class_down` / `class_up` scenarios since external consensus has relatively higher value when internal data is scarce.
+Optional: use `web_search` for expert tips (see "External Reference" above).
 
 ### Step 4: Generate Prediction Report
 
@@ -213,13 +146,13 @@ Output format:
 
 ### 🎯 Betting Style Profile
 
-Determine the appropriate betting strategy based on probability distribution:
+Auto-generated by `classify_betting_style()` in `output.py`:
 
-| Style | Condition | Meaning | Recommended Strategy |
-|-------|-----------|---------|---------------------|
-| **🛡️ Conservative** | Top1 prob ≥ 35%, or Top1+Top2 sum ≥ 60% | Clear favorite, low risk | Win/Place preferred, control cost |
-| **⚡ Aggressive** | Evenly distributed, Top1 < 25%, top-3 spread < 15% | Open race, upset opportunity | Dark horse hunting, PQ/Trio |
-| **🔀 Undecided** | Multiple horses at ~20%+ each (≥3) | Hard to separate | PQ all three pairs, spread risk |
+| Style | Meaning | Recommended Strategy |
+|-------|---------|---------------------|
+| **🛡️ Conservative** | Top1 or top-2 clearly dominant | Win/Place preferred, control cost |
+| **⚡ Aggressive** | Open field, no clear favorite | Dark horse hunting, PQ/Trio |
+| **🔀 Undecided** | Multiple horses with similar strength | PQ all three pairs, spread risk |
 
 ### 📋 Full Field Scoring
 (Each dimension scored 0-100, for reference)
@@ -247,39 +180,31 @@ Determine the appropriate betting strategy based on probability distribution:
 #### Betting Recommendation Logic (AI autonomous judgment)
 
 **1. Win**
-- Condition: Top1 probability >= 30%, **or** odds <= 4x
+- Condition: Top1 probability clearly dominant (35%+), **or** odds <= 4x
 - Reason: Favorite has significantly higher win probability
 - Risk: Low odds on favorites mean limited returns
 
 **2. Place**
-- Condition: Any of Top3 has probability >= 18%
+- Condition: Any of Top3 has probability >= 20%
 - Reason: Lower threshold than Win; any top-3 finish wins
 - Best for: Clear favorite but uncertain about exact finishing position
 
 **3. Quinella**
-- Condition: Top1 + Top2 probability sum >= 50%, and difference <= 20%
+- Condition: Top1 + Top2 probability sum >= 55%, both horses competitive
 - Reason: Both top horses have high confidence and comparable strength
 - Recommended combo: Horse #1 + Horse #2
 
 **4. Place Quinella (PQ)**
-- Condition: Top3 probabilities are scattered (max-min difference > 25%)
+- Condition: Top3 probabilities are scattered, hard to rank
 - Reason: Hard to rank top 3 confidently; PQ cheaper than Trio
 - Recommended combos: 1+2 / 1+3 / 2+3 (all three pairs)
 
 **5. Trio**
-- Condition: All Top3 have probability >= 10% each, and sum >= 45%
+- Condition: All Top3 have probability >= 10% each, sum >= 45%
 - Reason: High confidence across top 3, broad coverage
 - Recommended combo: #1 + #2 + #3
 
-#### Best Recommended Betting Type
-
-| Probability Distribution | Recommended | Notes |
-|------------------------|-------------|-------|
-| Top1 >= 35%, clear leader | **Win** or **Place** | Clear favorite, low risk |
-| Top1+Top2 >= 55%, stable top 2 | **Quinella** | Steady with moderate return |
-| Top3 scattered (three horses close) | **PQ** or **Trio** | Spread bet, wider coverage |
-| Top3 sum >= 55%, high overall confidence | **Trio** | High odds, high return |
-| Evenly distributed, no clear favorite | **PQ all three pairs** | Reduce single-bet risk |
+> AI should judge flexibly based on actual probability distribution. The script only outputs probability data; betting judgment is performed autonomously by AI.
 
 #### Betting Output Format
 
@@ -296,8 +221,6 @@ Determine the appropriate betting strategy based on probability distribution:
 - **Place Quinella (PQ)**: No.X+No.X / No.X+No.X / No.X+No.X — [reason]
 - **Trio**: No.X + No.X + No.X — [reason]
 ```
-
-> **Note**: The above is technical reference only. AI should judge flexibly based on actual probability distribution. The script (`output.py`) only outputs probability data; betting judgment is performed autonomously by AI when generating the report.
 
 ---
 
@@ -332,7 +255,7 @@ Run `analyze_race.py` to get full-field scores, extract the relevant horses' dim
 [Quick judgment based on score gap]
 
 ### Dimension Comparison
-:| Dimension | #X [Horse Name] | #X [Horse Name] | Advantage |
+| Dimension | #X [Horse Name] | #X [Horse Name] | Advantage |
 |:---------|:--------------:|:--------------:|:---------:|
 | Overall Score | XX | XX | #X |
 | Same-Condition History | XX | XX | #X |
@@ -352,22 +275,27 @@ Run `analyze_race.py` to get full-field scores, extract the relevant horses' dim
 
 When the user queries results of a race that has already finished:
 
-**Data Source**: Use `web_fetch` to scrape HKJC results page
+**Data Source**: Call `fetch_race_results()` to fetch HKJC results page, then `parse_race_results()` to parse structured data.
 
-```
-https://racing.hkjc.com/racing/information/English/Racing/LocalResults.aspx
+```python
+from fetch import fetch_race_results
+from parse import parse_race_results
+
+html = fetch_race_results("2026/04/01", "ST")
+races = parse_race_results(html)
+# races = [{"race_no": 1, "results": [{"pos": 1, "no": "12", "name": "爆熱", ...}]}, ...]
 ```
 
 **Logic**:
 - Results available after ~23:00 on race day
-- Extract: race number, winning horse (no. + name), 2nd, 3rd, official time
+- Extract: race number, position, horse no. + name, finish time, win odds
 
 **Results Output Format**:
 
 ```markdown
 ## [Date] [Venue] Race Results
 
-:| Race | 1st | 2nd | 3rd | Time |
+| Race | 1st | 2nd | 3rd | Time |
 |:----:|:---:|:---:|:---:|:----:|
 | 1 | No.X [Horse] | No.X [Horse] | No.X [Horse] | HH:MM |
 | 2 | ... | ... | ... | ... |
@@ -414,6 +342,15 @@ python scripts/analyze_race.py --venue ST --race 3
 # Scenario mode: newcomer / class_down / class_up / normal
 python scripts/analyze_race.py --venue ST --race 3 --scenario newcomer
 
+# Force refresh — bypass cache (~30 min before post)
+python scripts/analyze_race.py --venue ST --race 3 --force-refresh
+
+# Clear cache for this race then re-analyze
+python scripts/analyze_race.py --venue ST --race 3 --clear-cache
+
+# Show cache statistics
+python scripts/analyze_race.py --cache-stats
+
 # Check if tomorrow is a race day + run predictions
 python scripts/daily_scheduler.py --mode predict
 
@@ -457,14 +394,12 @@ python scripts/apply_evolution.py --rollback
 
 ### scripts/
 
-#### Main Program Modules (v1.4.0 Refactored)
-
 | File | Responsibility |
 |:-----|:---------------|
-| `main.py` | CLI parsing, main workflow orchestration, parallel history fetching (8 threads) |
+| `main.py` | CLI parsing, main workflow orchestration, parallel history fetching |
 | `analyze.py` | Single horse multi-dimensional scoring |
-| `scoring.py` | All scoring functions (history/odds/pace/jockey/tips/expert) |
-| `fetch.py` | HTTP requests, Playwright dynamic loading, tips index / horse history / race results |
+| `scoring.py` | All scoring functions (history/odds/pace/jockey/tips) |
+| `fetch.py` | HTTP requests, Playwright dynamic loading, horse history / tips / race results |
 | `parse.py` | Race card, horse history & race results HTML parsing |
 | `cache.py` | Disk cache read/write, TTL expiry, stats cleanup |
 | `output.py` | Markdown report formatting, auto betting-style classification |
@@ -485,7 +420,7 @@ python scripts/apply_evolution.py --rollback
 - `expert_sources.md` — Expert prediction reference sources
 
 ### Auto-generated Directories (appear after first run)
-- `.archive/` — Prediction archives (`YYYY-MM-DD_VENUE_prediction.json`) + backtest reports (`_backtest.json`)
-- `.evolution/` — Evolution suggestion reports (`evolution_YYYY-MM-DD_VENUE.md`) + applied history (`applied_history.json`)
+- `.archive/` — Prediction archives + backtest reports
+- `.evolution/` — Evolution suggestion reports + applied history
 - `.backups/` — `analyze_race.py` backups (auto-created before each `apply_evolution` run)
 - `.cache/` — HTTP response cache (auto-managed, keyed by URL hash)
