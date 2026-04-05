@@ -13,6 +13,7 @@ from scoring import (
     score_class_fit,
     score_odds_value,
     score_odds_drift,
+    score_implied_probability,
     score_sectional,
     score_jockey,
     score_trainer,
@@ -33,12 +34,26 @@ def analyze_horse(horse, venue, distance, track_condition, tips_data=None):
         track_condition: 赛道状况
         tips_data   : HKJC 贴士指数数据字典 {"tips": {"#马号": 值, ...}, ...}
     """
-    # 赔率评分
-    if horse["final_odds"]:
-        horse["odds_value_score"] = score_odds_value(horse["final_odds"])
+    # ── 赔率评分（v1.4.11 增强：独赢+位置赔率双信号 + 全场标准化）─────────
+    win_odds = horse.get("final_odds")
+    place_odds = horse.get("place_odds")
+    all_win_odds = horse.get("all_win_odds")  # 全场独赢赔率字典 {"#1": 1.8, ...}
+
+    if win_odds:
+        # 独赢赔率评分（精细20档 + 位置赔率加成）
+        horse["odds_value_score"] = score_odds_value(win_odds, place_odds=place_odds)
+        # 隐含胜率评分（全场标准化，与赔率绝对值互补）
+        if all_win_odds and len(all_win_odds) >= 2:
+            horse["implied_prob_score"] = score_implied_probability(win_odds, all_win_odds=all_win_odds)
+        else:
+            horse["implied_prob_score"] = horse["odds_value_score"]  # 回退
         horse["odds_drift_score"] = score_odds_drift(
             horse["opening_odds"], horse["final_odds"]
         )
+    else:
+        horse["odds_value_score"] = 50
+        horse["implied_prob_score"] = 50
+        horse["odds_drift_score"] = 50
 
     # HKJC 官方贴士指数评分
     if tips_data and tips_data.get("tips"):

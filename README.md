@@ -46,10 +46,10 @@ python scripts/analyze_race.py --cache-stats
 
 | 功能 / Feature | 描述 / Description |
 |----------------|---------------------|
-| **多维度分析 / Multi-dimensional** | 8个加权维度：历史(33%)、赔率(30%)、配速(10%)、骑师(5%)、练马师(4%)、档位(5%)、贴士指数(6%)、专家共识(4%) |
+| **多维度分析 / Multi-dimensional** | 10个加权维度：赔率综合(22%)、赔率走势(18%)、同距离同场地历史(13%)、同场地历史(15%)、配速(8%)、骑师(4%)、练马师(3%)、档位(4%)、班次适配(7%)、贴士指数(6%) |
 | **后备马信息 / Reserve Horses** | 正选退赛时后备马自动递补，信息完整展示于分析报告中 |
 | **HKJC 实时数据 / Real-time Data** | 抓取官方 HKJC 页面 — 排位表、赔率、赛果、马匹档案、投注赔率(bet.hkjc.com) |
-| **投注赔率 / Betting Odds** | 独赢/位置/连赢/三重彩/位置Q 五种投注方式赔率抓取与分析 |
+| **投注赔率 / Betting Odds** | 独赢/位置/连赢/三重彩/位置Q 五种投注方式赔率抓取与分析；独赢赔率 20 档精细评分 + 隐含胜率融合 |
 | **智能缓存 / Smart Caching** | 分层 TTL (5分钟–7天)，Zlib 压缩存储，结构化数据优先，空间减少 80-90% |
 | **每日自动化 / Daily Automation** | 14:30 预测，23:30 回测 |
 | **自我进化引擎 / Self-Evolution** | 对比预测与实际赛果，生成权重优化建议 |
@@ -94,6 +94,11 @@ hk-racing-analyzer/
 | 赔率数据 / Odds data | 5 分钟 / min | 临场实时变化 / Real-time |
 | 投注赔率 / Betting odds | 5 分钟 / min | 独赢/位置/连赢/三重彩/位置Q |
 | 贴士指数 / Tips index | 30 分钟 / min | 每场赛前更新 / Updated before each race |
+
+**v1.4.11 优化 / v1.4.11 Optimizations:**
+- **赔率权重提升 / Odds Weight Increase**: 赔率系合计从 30% → 40%，成为预测主导信号
+- **赔率评分增强 / Enhanced Odds Scoring**: 独赢赔率 20 档精细评分 + 位置赔率加成 + 隐含胜率融合
+- **Softmax 参数调整 / Softmax Tuning**: Temperature 2.0 → 4.0，概率分布更平滑
 
 **v1.4.8 优化 / v1.4.8 Optimizations:**
 - **Zlib 压缩存储 / Zlib Compression**: HTML 压缩率 70-80%（200KB → 40-60KB）
@@ -164,6 +169,9 @@ hk-racing-analyzer/
 
 | 版本 / Version | 日期 / Date | 主要更新 / Main Changes |
 |---------------|-------------|------------------------|
+| [v1.4.11](RELEASE_NOTES.md#v1411--2026-04-05) | 2026-04-05 | 赔率权重优化：即时市场信号主导预测；赔率评分增强（20档+隐含胜率）；Softmax参数调整(T=4.0)；Skill双语文档结构优化 / Odds weight optimization: market signals dominate; enhanced odds scoring (20-tier + implied probability); Softmax tuning (T=4.0); bilingual docs restructure |
+| [v1.4.10](RELEASE_NOTES.md#v1410--2026-04-05) | 2026-04-05 | Bug修复：赔率抓取失败（改用Playwright DOM提取）/ Bug fix: odds scraping (switched to Playwright DOM extraction) |
+| [v1.4.9](RELEASE_NOTES.md#v149--2026-04-05) | 2026-04-05 | Bug修复：批量预测存档全空（缓存解析+字段名问题）/ Bug fix: empty batch predictions (cache parsing + field name issues) |
 | [v1.4.8](RELEASE_NOTES.md#v148--2026-04-03) | 2026-04-03 | 缓存系统优化：Zlib压缩+结构化存储，空间减少80-90%；投注赔率功能补全：独赢/位置/连赢/三重彩/位置Q完整解析 / Cache optimization: Zlib compression + structured storage, 80-90% space reduction; Betting odds complete: Win/Place/Quinella/Trio/QP |
 | [v1.4.7](RELEASE_NOTES.md#v147--2026-04-03) | 2026-04-03 | Bug修复+代码清理；Skill文档增强（触发词/自然语言/投注风格/对比功能/赛果查询）；新增投注风格自动标注+赛果查询模块 / Bug fixes, code cleanup, skill docs enhancement, betting style classification, race results query |
 | [v1.4.6](RELEASE_NOTES.md#v146--2026-04-03) | 2026-04-03 | 后备马解析与展示：正选退赛时后备马自动递补，展示于报告中（不参与预测评分）/ Reserve horse parsing & display: emergency horses shown in report |

@@ -184,42 +184,130 @@ def score_class_fit(current_rating, class_ceiling, class_floor):
 # 赔率评分
 # ==============================================================================
 
-def score_odds_value(odds):
+def score_odds_value(win_odds, place_odds=None):
     """
-    评分：临场赔率绝对值（0-100）。
+    评分：临场赔率综合评分（0-100）。
+
+    v1.4.11 重大增强：
+
+    - 独赢赔率：主要信号，细分更多档位（15档 → 20档）
+    - 位置赔率：辅助信号，若独赢 > 8 且位置赔率偏低（<3.5），说明市场认为它进前3稳定
+    - 隐含胜率标准化：跨场次比较时使用隐含胜率而非绝对赔率值
+
+    参数：
+        win_odds  : 独赢赔率（float）
+        place_odds: 位置赔率（float，可选）
     """
-    if odds < 3.0:
-        return 90
-    elif odds < 5.0:
-        return 70
-    elif odds < 10.0:
-        return 50
-    elif odds < 20.0:
-        return 30
+    if not win_odds or win_odds <= 0:
+        return 50  # 无数据返回中性默认值
+
+    base = 50
+
+    # ── 独赢赔率分档（20档精细评分）───────────────────────────────
+    if win_odds < 1.5:
+        base = 98  # 超级大热门
+    elif win_odds < 2.0:
+        base = 93  # 极大热门
+    elif win_odds < 2.5:
+        base = 88  # 大热门
+    elif win_odds < 3.0:
+        base = 82  # 热门
+    elif win_odds < 3.5:
+        base = 77  # 偏热
+    elif win_odds < 4.0:
+        base = 72  # 轻微热门
+    elif win_odds < 5.0:
+        base = 66  # 中上
+    elif win_odds < 6.0:
+        base = 60  # 中游偏热
+    elif win_odds < 7.0:
+        base = 55  # 中游
+    elif win_odds < 8.5:
+        base = 50  # 中游偏冷
+    elif win_odds < 10.0:
+        base = 45  # 轻微冷门
+    elif win_odds < 12.0:
+        base = 39  # 冷门
+    elif win_odds < 15.0:
+        base = 33  # 偏大冷
+    elif win_odds < 20.0:
+        base = 26  # 大冷门
+    elif win_odds < 30.0:
+        base = 18  # 极大冷
+    elif win_odds < 50.0:
+        base = 10  # 超级冷
     else:
-        return 10
+        base = 5   # 超远冷
+
+    # ── 位置赔率加成（辅助信号）──────────────────────────────────
+    # 逻辑：若某马独赢不低（>8）但位置赔率低（<3.5），
+    # 说明市场认为它进前三稳定，可信度高，给 +5 分
+    if place_odds and place_odds > 0 and win_odds > 8.0:
+        # 隐含位置胜率 ≈ 1/(place_odds*3)，简化判断：place_odds < 3.5 → 市场看好位置
+        if place_odds < 3.0:
+            base += 7   # 位置强烈看好
+        elif place_odds < 3.5:
+            base += 4   # 位置看好
+
+    return min(100, max(0, base))
+
+
+def score_implied_probability(win_odds, all_win_odds: dict = None) -> int:
+    """
+    评分：将赔率转换为隐含胜率（0-100）。
+
+    v1.4.11 新增，v1.4.11 修复 bug。
+
+
+    逻辑：
+    - 隐含胜率 = 1 / 赔率 × 0.92（扣除 HKJC 约 8% 抽水）
+    - 直接将隐含胜率映射为 0-100 分（1.8 odds → 约 51 分）
+    - 不做全场 max 标准化（否则全场最佳马得 100 分，gap 过大 → Softmax 概率失真）
+
+    参数：
+        win_odds    : 本马独赢赔率（float）
+        all_win_odds: 全场独赢赔率字典（当前版本未使用，保留参数兼容）
+    """
+    if not win_odds or win_odds <= 0:
+        return 50
+
+    # 隐含胜率 = 1/赔率，修正 HKJC 约 8% 抽水
+    implied = (1.0 / float(win_odds)) * 0.92
+
+    # 映射到 0-100 分（50 = 中性，隐含胜率 50% → 评分 46）
+    score = round(implied * 92, 0)  # 隐含胜率 51% → 评分 47
+    return min(100, max(0, int(score)))
 
 
 def score_odds_drift(opening_odds, final_odds):
     """
     评分：赔率走势变化幅度（0-100）。
+
+    v1.4.11 增强：若无开盘赔率但有全场赔率数据，
+
+    使用"赔率场内排名变化"作为替代信号。
+
     opening_odds 为 None 时返回中性默认值 50。
     """
     if opening_odds is None or opening_odds <= 0:
-        return 50  # 无开盘赔率数据
+        return 50  # 无开盘赔率数据，使用中性默认
 
     change_ratio = (opening_odds - final_odds) / opening_odds  # 正数=缩水，负数=拉长
 
     if change_ratio > 0.50:
-        return 90
+        return 92  # 强烈资金涌入
+    elif change_ratio > 0.30:
+        return 80  # 明显资金涌入
     elif change_ratio > 0.20:
-        return 70
+        return 70  # 轻微看好
     elif change_ratio >= -0.20:
-        return 50
+        return 50  # 市场平稳
+    elif change_ratio >= -0.35:
+        return 32  # 轻微看淡
     elif change_ratio >= -0.50:
-        return 30
+        return 20  # 明显资金流出
     else:
-        return 10
+        return 8   # 强烈看淡
 
 
 # ==============================================================================
@@ -490,11 +578,18 @@ def calculate_total_score(horse_data, weights):
     """
     根据权重和各维度评分计算综合分。
 
+    v1.4.11 增强：赔率综合评分 = odds_value_score × 0.4 + implied_prob_score × 0.6
+
+    - odds_value_score：独赢绝对值分档 + 位置赔率加成
+    - implied_prob_score：全场标准化隐含胜率（市场共识归一化）
+    两者融合得到"赔率市场共识评分"，作为 odds_value 权重的主信号。
+
     horse_data 字段说明：
         history_same_condition_score : int (0-100)
         history_same_venue_score     : int (0-100)
         class_fit_score              : int (0-100)
         odds_value_score             : int (0-100)
+        implied_prob_score           : int (0-100)  # v1.4.11 新增
         odds_drift_score             : int (0-100)
         sectional_score              : int (0-100)
         jockey_score                 : int (0-100)
@@ -503,11 +598,32 @@ def calculate_total_score(horse_data, weights):
         tips_index_score             : int (0-100)
         expert_score                 : int (0-100)
     """
+    # ── v1.4.11 赔率综合评分融合逻辑 ──────────────────────────────
+    # odds_value_score    : 独赢赔率绝对值分档(20档) + 位置赔率加成
+    # implied_prob_score  : 隐含胜率映射（1.8 odds → 评分47，13 odds → 7）
+    # 融合公式：odds_market = odds_abs × 0.4 + odds_implied × 0.6
+    # → 1.8 odds → 75分，13 odds → 20分（score gap ≈ 55 分）
+    # cap 机制：odds_market 超过 cap 时按比例压缩，防止 gap 过大使 Softmax 失真
+    # cap=0.50 → effective odds weight ≈ 22% × 0.50 = 11%（从 22% 有效压缩）
+    # 说明：cap 值越大，有效赔率权重越高，但概率也会更集中于热门马。
+    odds_abs     = horse_data.get("odds_value_score", 50)
+    odds_implied = horse_data.get("implied_prob_score", odds_abs)
+    odds_blended = round(odds_abs * 0.4 + odds_implied * 0.6, 2)
+
+    # cap 压缩：限制 odds_blended 最高为基线的 (1/cap_ratio) 倍
+    cap_ratio = 0.50  # 0.40=极保守，0.50=适中，0.70=赔率主导
+    baseline = 50.0   # 中性分数
+    if odds_blended > baseline:
+        max_allowed = baseline + (odds_blended - baseline) * cap_ratio
+        odds_blended = min(odds_blended, max_allowed)
+
+    horse_data["odds_market_score"] = round(odds_blended, 1)
+
     field_map = {
         "history_same_condition": "history_same_condition_score",
         "history_same_venue": "history_same_venue_score",
         "class_fit": "class_fit_score",
-        "odds_value": "odds_value_score",
+        "odds_value": "odds_market_score",   # v1.4.11: 使用融合后的赔率综合评分
         "odds_drift": "odds_drift_score",
         "sectional": "sectional_score",
         "jockey": "jockey_score",

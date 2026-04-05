@@ -385,13 +385,15 @@ def main():
     # ── 导入 analyze_horse（避免循环导入）───────────────────────
     from analyze import analyze_horse
 
-    # ── 将赔率数据注入到每匹马 ────────────────────────────────────
-    win_odds = odds_data.get("win", {})
-    place_odds = odds_data.get("place", {})
+    # ── 将赔率数据注入到每匹马（v1.4.11 增强：含全场赔率字典）─────────
+    win_odds_map = odds_data.get("win", {})           # {"#1": 1.8, "#2": 21.0, ...}
+    place_odds_map = odds_data.get("place", {})       # {"#1": 1.4, "#2": 4.0, ...}
     for horse in regular_horses:
         horse_key = f"#{horse['no']}"
-        horse["final_odds"] = win_odds.get(horse_key)    # 临场独赢赔率
-        horse["opening_odds"] = None                      # 开盘赔率（待后续扩展）
+        horse["final_odds"] = win_odds_map.get(horse_key)    # 临场独赢赔率
+        horse["place_odds"] = place_odds_map.get(horse_key) # 位置赔率（v1.4.11新增）
+        horse["opening_odds"] = None                       # 开盘赔率（待后续扩展）
+        horse["all_win_odds"] = win_odds_map              # 全场独赢赔率字典（v1.4.11新增）
 
     # 各维度评分（传入贴士指数数据）
     for horse in regular_horses:

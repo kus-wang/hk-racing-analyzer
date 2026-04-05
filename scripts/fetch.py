@@ -208,9 +208,15 @@ def fetch_horse_history(horse_id: str, force_refresh: bool = False) -> dict:
         "https://racing.hkjc.com/racing/information/Chinese/Horse/Horse.aspx"
         f"?HorseId={horse_id}"
     )
-    html = fetch_url(url, timeout=20, force_refresh=force_refresh)
-    if not html:
+    cached_or_html = fetch_url(url, timeout=20, force_refresh=force_refresh)
+    if not cached_or_html:
         return {"current_rating": 40, "history": []}
+
+    # v1.4.9 fix: 若缓存命中且已含 parsed dict，直接返回，避免 re.search 报 TypeError
+    if isinstance(cached_or_html, dict):
+        return cached_or_html
+
+    html = cached_or_html
 
     # 解析并更新缓存（v1.4.8: 同时存储结构化数据）
     parsed = parse_horse_history(html)
@@ -511,7 +517,7 @@ def fetch_race_odds(
     # 赔率页面使用独立缓存 key，避免与排位表混淆
     odds_cache_url = f"odds_{date_iso}_{venue}_{race_no}"
 
-    # v1.4.8: 使用统一缓存接口，支持自定义 key 和结构化数据
+    # v1.4.9: 使用统一缓存接口，支持自定义 key 和结构化数据
     if not force_refresh:
         cached = _cache_get(url, cache_key=odds_cache_url)
         if cached is not None:
@@ -520,32 +526,148 @@ def fetch_race_odds(
                 print(f"  💾 缓存命中 [odds]: {url[:70]}...")
                 return cached
 
-    # 抓取 HTML
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "zh-HK,zh;q=0.9,en;q=0.8",
-        "Referer": "https://bet.hkjc.com/",
-    }
-
-    try:
-        req = Request(url, headers=headers)
-        with urlopen(req, timeout=20) as response:
-            html = response.read().decode("utf-8", errors="ignore")
-        print(f"  🌐 获取赔率页面: {url}")
-    except Exception as e:
-        print(f"  ⚠️  赔率页面抓取失败: {e}，返回空数据")
-        result = _empty_odds_result(race_no, venue, date_iso)
-        _save_odds_cache(odds_cache_url, result)
-        return result
-
-    # 解析赔率数据
-    from parse import parse_race_odds
-    result = parse_race_odds(html, race_no=race_no, venue=venue, date=date_iso)
+    # ── v1.4.10: 使用 Playwright 从动态渲染的 DOM 直接提取赔率 ──────────
+    # 赔率页面是 JS 动态加载，普通 HTTP 请求无法获取数据，必须用 Playwright
+    result = _fetch_odds_with_playwright(url, race_no=race_no, venue=venue, date=date_iso)
 
     # 写入缓存
     _save_odds_cache(odds_cache_url, result)
     return result
+
+
+def _fetch_odds_with_playwright(url: str, race_no: int, venue: str, date: str) -> dict:
+    """
+    使用 Playwright 提取 HKJC 赔率页面的投注数据。
+
+    赔率页面通过 JS 动态渲染，直接用 HTTP 请求只能拿到空壳 HTML。
+    本函数通过 Playwright 获取渲染后的页面内容，再从 DOM 表格直接提取数据。
+
+    返回结构同 fetch_race_odds()。
+    """
+    import re as _re
+
+    def _empty():
+        return {
+            "race_no": race_no, "venue": venue, "date": date,
+            "win": {}, "place": {}, "quinella": {}, "trio": {},
+            "quinella_place": {}, "last_updated": None,
+            "source": "bet.hkjc.com", "status": "unavailable",
+        }
+
+    try:
+        page = PlaywrightManager.new_page()
+        if page is None:
+            print(f"  ⚠️  Playwright 不可用，赔率抓取失败")
+            return _empty()
+
+        print(f"  🌐 Playwright 获取 [odds]: {url[:70]}...")
+        page.goto(url, timeout=30000)
+        page.wait_for_timeout(6000)  # 等待 JS 动态渲染完成
+
+        # ── 方案A：直接从 DOM 表格提取独赢/位置赔率 ───────────────────────
+        # HKJC 赔率页面结构：<table> 包含马号/马名/档位/骑师/独赢/位置 等列
+        win_odds = {}
+        place_odds = {}
+
+        tables = page.query_selector_all("table")
+        for tbl in tables:
+            rows = tbl.query_selector_all("tr")
+            header_cols = None  # 列索引映射
+
+            for row in rows:
+                cells = row.query_selector_all("td")
+                if not cells:
+                    continue
+
+                # 提取单元格文本
+                cell_texts = []
+                for c in cells:
+                    t = c.inner_text().strip()
+                    # 清理多余的空白
+                    t = _re.sub(r'\s+', ' ', t)
+                    cell_texts.append(t)
+
+                text_all = " ".join(cell_texts)
+
+                # 检测表头行（含有马号/独赢/位置关键字）
+                if header_cols is None:
+                    if any(k in text_all for k in ['馬號', '馬号', '马号']):
+                        header_cols = {}
+                        for idx, ct in enumerate(cell_texts):
+                            ct_up = ct.upper()
+                            if any(k in ct_up for k in ['馬號', '馬号', 'HORSE NO', 'NO.']):
+                                header_cols[idx] = 'horse_no'
+                            elif '獨贏' in ct or 'WIN' in ct_up:
+                                header_cols[idx] = 'win'
+                            elif '位置' in ct or 'PLACE' in ct_up:
+                                header_cols[idx] = 'place'
+                    continue
+
+                # 数据行：从已知的列索引提取马号和赔率
+                if header_cols:
+                    horse_no = None
+                    win_val = None
+                    place_val = None
+
+                    for idx, ct in enumerate(cell_texts):
+                        col_type = header_cols.get(idx)
+                        if col_type == 'horse_no':
+                            # 马号列：提取纯数字
+                            m = _re.search(r'^(\d+)$', ct.strip())
+                            if m:
+                                horse_no = m.group(1)
+                        elif col_type == 'win':
+                            # 独赢赔率：提取数字（含小数点）
+                            m = _re.search(r'^([\d.]+)$', ct.strip())
+                            if m:
+                                try:
+                                    win_val = float(m.group(1))
+                                except ValueError:
+                                    pass
+                        elif col_type == 'place':
+                            # 位置赔率
+                            m = _re.search(r'^([\d.]+)$', ct.strip())
+                            if m:
+                                try:
+                                    place_val = float(m.group(1))
+                                except ValueError:
+                                    pass
+
+                    if horse_no and win_val:
+                        win_odds[f"#{horse_no}"] = win_val
+                    if horse_no and place_val:
+                        place_odds[f"#{horse_no}"] = place_val
+
+        # 判断是否成功获取到赔率数据
+        if not win_odds:
+            # ── 方案B：回退到解析 page.content() 的 HTML ────────────────
+            print(f"  ⚠️  DOM 表格提取失败，尝试解析渲染后 HTML...")
+            html = page.content()
+            from parse import parse_race_odds
+            parsed = parse_race_odds(html, race_no=race_no, venue=venue, date=date)
+            if parsed.get("status") == "ok" and parsed.get("win"):
+                return parsed
+            print(f"  ⚠️  赔率页面 JS 渲染失败或无数据，返回空")
+            return _empty()
+
+        print(f"  ✅ 赔率已获取 | 独赢:{len(win_odds)} 位置:{len(place_odds)}")
+        return {
+            "race_no": race_no,
+            "venue": venue,
+            "date": date,
+            "win": win_odds,
+            "place": place_odds,
+            "quinella": {},
+            "trio": {},
+            "quinella_place": {},
+            "last_updated": None,
+            "source": "bet.hkjc.com",
+            "status": "ok",
+        }
+
+    except Exception as e:
+        print(f"  ⚠️  Playwright 赔率抓取失败: {e}，返回空数据")
+        return _empty()
 
 
 def _empty_odds_result(race_no: int, venue: str, date: str) -> dict:

@@ -4,6 +4,94 @@
 
 ---
 
+## v1.4.11 — 2026-04-05
+
+### 🚀 赔率权重优化：即时市场信号主导预测
+
+**背景**：v1.4.10 修复了赔率抓取 Bug（Playwright DOM 提取），实盘赔率数据现已可靠可用。
+用户要求提高即时赔率的权重占比，因为它反映市场共识，是赛前最高质量的预测信号。
+
+---
+
+#### 1. 权重重新分配
+
+| 维度 | v1.4.x | v1.4.11 | 变化 | 说明 |
+|------|--------|--------|------|------|
+| **赔率综合评分** | 15% | **22%** | **+7%** | 独赢20档精细评分 + 位置赔率加成 + 隐含胜率融合 |
+| **赔率走势** | 15% | **18%** | **+3%** | 市场资金流向信号更受重视 |
+| 同距离同场地历史 | 16% | **13%** | -3% | 降低历史数据权重（补充赔率共识） |
+| 同场地历史 | 18% | **15%** | -3% | 同上 |
+| 配速指数 | 10% | **8%** | -2% | 待配速实测数据接入后恢复 |
+| 外部专家预测 | 4% | **0%** | -4% | 信息来源不稳定，移除 |
+| 练马师 | 4% | **3%** | -1% | 次要因素 |
+| 骑师 | 5% | **4%** | -1% | 次要因素 |
+| 档位 | 5% | **4%** | -1% | 次要因素 |
+| 班次适配 | 8% | **7%** | -1% | 次要因素 |
+| **赔率系合计** | **30%** | **40%** | **+10%** | 赔率正式成为预测主导信号 |
+
+#### 2. 赔率评分函数增强（scoring.py）
+
+- **`score_odds_value()`**：独赢赔率从 5 档扩展到 20 档（1.5 倍以下=98分起），并加入位置赔率加成（独赢 > 8 + 位置 < 3.5 → +4~7 分）
+- **新增 `score_implied_probability()`**：将独赢赔率转换为隐含胜率（扣除 HKJC 约 8% 抽水），直接映射为 0-100 分（1.8 odds → 评分 47；13 odds → 评分 7），避免全场 max 标准化导致的 score gap 过大问题
+- **`odds_market_score` 融合公式**：`独赢分档×0.4 + 隐含胜率×0.6`，再通过 cap=0.50 压缩，防止赔率信号 gap 压垮其他维度
+
+#### 3. Softmax 参数调整
+
+| 参数 | v1.4.x | v1.4.11 | 说明 |
+|------|--------|--------|------|
+| SOFTMAX_TEMPERATURE | 2.0 | **4.0** | 提高使概率分摊更平滑，避免赔率信号增强后 score gap 拉大导致的极端概率 |
+| PROB_CAP | 0.50 | **0.88** | T=4.0 下正常情况不会触发 cap，保留极端情况保护 |
+
+**效果**：1.8 倍超级大热门 → 预测 80.6%（赔率隐含胜率 51%，模型叠加同场地/贴士/骑师正向信号后提升至 80.6%，属于合理高置信度）
+
+#### 4. 全场赔率数据注入（main.py）
+
+- `fetch_race_odds()` 返回的独赢/位置赔率字典现已注入每匹马
+- 新增 `place_odds`（位置赔率）和 `all_win_odds`（全场独赢赔率字典）字段
+- 这些数据用于赔率评分和隐含胜率计算
+
+#### 5. Skill 双语文档结构优化
+
+**背景**：Skill 面向双语用户（中文为主，英文备用），需保持参考文件与 SKILL 版本引用一致。
+
+- **精简 SKILL.md / SKILL_EN.md**：移除冗长的详细流程代码块（报告模板/投注逻辑/对比/赛果），改为引用 `references/workflow.md`
+  - SKILL.md：~432行 → **156行**（↓ 64%）
+  - SKILL_EN.md：~427行 → **186行**（↓ 56%）
+- **新建 `references/workflow.md`**：将详细工作流程外置，包含投注逻辑、CLI用法、马匹对比、赛果查询完整代码示例（~216行）
+- **删除 `references/analysis_weights_en.md`（旧版）**：旧版权重数据已过时（v1.4.x），且 SKILL_EN.md 实际引用的是 `analysis_weights.md`（中文），该文件孤立有误导风险
+- **恢复 `references/analysis_weights_en.md`**：根据 v1.4.11 精准翻译重建，SKILL_EN.md 同步更新引用路径
+- 保留 `references/expert_sources_en.md`、`references/hkjc_urls_en.md`：翻译准确，无过时数据
+
+---
+
+## v1.4.10 — 2026-04-05
+
+### 🐛 Bug 修复：赔率抓取失败（普通 HTTP 请求无法获取 JS 动态内容）
+
+**症状**：即使 HKJC 赔率页面已开盘，分析报告中赔率仍显示 `None`，控制台输出 `⚠️ 赔率未开盘或抓取失败`。
+
+**根因**：HKJC 投注赔率页面（`bet.hkjc.com/ch/racing/wp/...`）内容通过 JavaScript 动态渲染，`fetch_race_odds()` 使用普通 `urllib` HTTP 请求只能获取空壳 HTML，`parse_race_odds()` 无法提取任何数据。
+
+**修复**：新增 `_fetch_odds_with_playwright()` 函数，使用 Playwright 从渲染后的 DOM 表格直接提取独赢/位置赔率（方案A：DOM 提取）。若 DOM 表格提取失败，自动回退到方案B：解析 Playwright 渲染后的 HTML（兼容现有 `parse_race_odds` 逻辑）。
+
+---
+
+## v1.4.9 — 2026-04-05
+
+### 🐛 Bug 修复：批量预测存档全空（horses/top3 均为空列表）
+
+**症状**：`daily_scheduler.py --mode predict` 运行成功，但存档中所有场次 `runners=0, top3=[]`。
+
+**根因 1（`fetch.py`）**：`fetch_horse_history()` 调用 `fetch_url()` 时，若缓存命中且含 `parsed` 字段，`_cache_get()` 直接返回已解析的 dict（v1.4.8 新缓存策略）。该 dict 被传入 `parse_horse_history(html)` → `re.search(..., html)` 报 `TypeError: expected string or bytes-like object, got 'dict'` → 整场预测崩溃但被 `except Exception` 静默吞掉 → `top3=[]`。
+
+**根因 2（`daily_scheduler.py`）**：`analyze_race.py --output json` 的输出字段为 `regular_horses`，但 `_run_single_prediction()` 使用 `data.get("horses", [])` 读取，始终拿到空列表。
+
+**修复**：
+- `fetch.py`：`fetch_horse_history()` 增加类型判断——若 `fetch_url()` 返回 dict（已解析），直接 return，不再调用 `parse_horse_history()`
+- `daily_scheduler.py`：`_run_single_prediction()` 改为 `data.get("regular_horses") or data.get("horses", [])` 兼容两个字段名
+
+---
+
 ## v1.4.8 — 2026-04-03
 
 ### 🚀 缓存系统优化（Zlib 压缩 + 结构化存储）

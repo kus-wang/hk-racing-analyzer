@@ -263,7 +263,8 @@ def _run_single_prediction(script_path: str, date_str: str, venue: str, race_no:
         data = json.loads(json_str)
 
         # 提取前3预测（按 total_score 降序的前3个马号）
-        horses = data.get("horses", [])
+        # analyze_race.py 输出字段为 regular_horses，兼容旧版 horses
+        horses = data.get("regular_horses") or data.get("horses", [])
         sorted_horses = sorted(horses, key=lambda h: h.get("total_score", 0), reverse=True)
         top3 = [h.get("horse_no") or h.get("no") for h in sorted_horses[:3]]
 

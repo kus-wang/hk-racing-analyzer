@@ -34,23 +34,25 @@ def get_weights(venue="ST", distance=1400, track_type="turf", race_scenario="nor
 
     elif race_scenario == "class_down":
         weights["class_fit"] = 0.15
-        weights["odds_drift"] = 0.18
-        weights["tips_index"] = 0.04  # 降班马降低官方贴士权重
+        weights["odds_value"] = 0.20  # 降班马赔率信号更强
+        weights["odds_drift"] = 0.20   # 市场对降班马反应灵敏
+        weights["tips_index"] = 0.03  # 降班马降低官方贴士权重
         weights["expert"] = 0.00
-        weights["history_same_condition"] = 0.10
-        weights["history_same_venue"] = 0.07
+        weights["history_same_condition"] = 0.08
+        weights["history_same_venue"] = 0.05
 
     elif race_scenario == "class_up":
-        weights["history_same_condition"] = 0.08
-        weights["history_same_venue"] = 0.09
-        weights["odds_drift"] = 0.18
-        weights["tips_index"] = 0.04  # 升班马降低官方贴士权重
+        weights["history_same_condition"] = 0.06
+        weights["history_same_venue"] = 0.07
+        weights["odds_value"] = 0.20
+        weights["odds_drift"] = 0.22   # 升班马赔率走势是关键信号
+        weights["tips_index"] = 0.03  # 升班马降低官方贴士权重
         weights["expert"] = 0.00
 
     # ── 场地调整 ────────────────────────────────
     if venue == "HV":
-        weights["barrier"] = weights.get("barrier", 0.05) + 0.03
-        weights["history_same_venue"] = max(0, weights.get("history_same_venue", 0.10) - 0.03)
+        weights["barrier"] = weights.get("barrier", 0.04) + 0.04  # HV 内档更重要
+        weights["history_same_venue"] = max(0, weights.get("history_same_venue", 0.15) - 0.03)
 
     # ── 距离调整 ────────────────────────────────
     if distance >= 1800:
