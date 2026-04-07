@@ -8,7 +8,7 @@
 |:-------|:-----:|:--------------|
 | `main.py` | ~200 | CLI parsing, main flow orchestration |
 | `analyze.py` | ~140 | Multi-dimension composite scoring for single horses |
-| `scoring.py` | ~470 | All scoring functions (history/odds/pace/jockey/tips) |
+| `scoring.py` | ~530 | All scoring functions (history/odds/pace/jockey/tips, incl. v1.4.13 win/place ratio) |
 | `fetch.py` | ~340 | HTTP requests, Playwright dynamic loading, horse history/tip ratings |
 | `parse.py` | ~330 | Race card, horse race history HTML parsing |
 | `cache.py` | ~150 | Disk cache read/write, TTL expiry, statistics cleanup |
@@ -136,6 +136,22 @@
 | Odds lengthened > 50% | 0-19 | Strong bearish signal |
 
 > If no opening odds data is available, this sub-dimension uses neutral default score of 50.
+
+---
+
+### Odds Scoring (New Sub-dimension: Win/Place Ratio) (0-100)
+
+> **v1.4.13 New**: `score_win_place_ratio()`, a cold-shot signal independent of odds_value scoring.
+
+| Ratio Range (Win Odds ÷ Place Odds) | Score | Market Interpretation |
+|-------------------------------------|-------|----------------------|
+| < 2.0 | 78 | Win≈Place, market extremely bullish on win |
+| 2.0 - 2.5 | 68 | Strongly bullish on win |
+| 2.5 - 4.0 | 50 | Normal market pricing |
+| 4.0 - 5.5 | 38 | High ratio, market thinks "can place but hard to win" |
+| > 5.5 | 25 | Very high, market thinks almost impossible to win (true weak horse) |
+
+**Application**: This signal is used in `betting.py`'s longshot recommendations, filtering out "fake cold shots" (horses with high win odds but also low place odds — not truly high-value win targets).
 
 ---
 
@@ -374,6 +390,7 @@ Trainer is long-term bound to the horse. Scoring logic similar to jockey, but re
 
 | Date | Changes |
 |------|---------|
+| 2026-04-07 | **v1.5.1 odds_drift end-to-end fix**: opening_odds_snapshot backfill now effective; new `score_win_place_ratio()` win/place ratio cold-shot signal; longshot recommendations enhanced with fake-cold-shot filter |
 | 2026-04-05 | **v1.4.11 Odds weight optimization**: odds_value 15%→22%, odds_drift 18%→18%, Softmax T=4.0, PROB_CAP=0.88, added 20-tier fine-grained odds scoring, implied probability fusion, place odds bonus |
 | 2026-04-02 | **v1.4.3 Evolution suggestions applied**: ①Softmax temperature 1.5→2.0; ②history_same_condition 18%→16%; ③odds_drift 13%→15%; ④sectional 15%→10% (temporary); ⑤history_same_venue 13%→18%; ⑥score_history time decay added (last 30d×1.0, 31-90d×0.8, 91-180d×0.6, >180d×0.4) |
 | 2026-04-01 | **v1.4.0 Modular refactoring**: analyze_race.py (~600 lines) split into 11 independent modules (main/analyze/scoring/fetch/parse/cache/output/config/weights/probability), entry compatibility layer keeps CLI unchanged |

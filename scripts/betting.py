@@ -212,6 +212,12 @@ def get_longshot_tip(sorted_horses: list) -> dict | None:
         if vi is None or vi <= 1.3:
             continue
 
+        # v1.4.13: win_place_ratio_score < 38（独赢/位置比值高 > 4.0），
+        # 说明市场认为"能进前3但难赢"，这类马独赢更有价值
+        wpr_score = h.get("win_place_ratio_score", 50)
+        if wpr_score < 38:  # 低于38说明比值高，不是真正冷门
+            continue
+
         # longshot_alert 的马优先
         priority = 1 if h.get("longshot_alert") else 0
         candidates.append({

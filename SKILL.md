@@ -117,7 +117,11 @@ python scripts/analyze_race.py --cache-stats
 | `weights.py` | 场景/场地/距离适配的动态权重计算 |
 | `probability.py` | Softmax归一化概率计算 |
 | `analyze_race.py` | **入口兼容层**（直接调用 main.py，CLI用法不变）|
-| `daily_scheduler.py` | 每日自动化调度：赛马日检测、批量预测、赛后回测 |
+| `daily_scheduler.py` | **自动化调度编排器**（~390行）：批量预测流程编排 + 主流程入口 |
+| `scheduler_cache.py` | HTTP 缓存管理 + HTML 抓取（由调度器专用）|
+| `race_day.py` | 赛马日检测：判断指定日期是否有赛事，返回场地和场次数 |
+| `race_results.py` | 实际赛果抓取 + HTML 解析：返回名次/马号/马名 |
+| `evolution_report.py` | 回测精度计算 + 进化建议生成 + Markdown 报告渲染 |
 | `betting.py` | 投注推荐模块：场型判断、价值指数、冷门建议接口、回测命中验证（v1.5.0）|
 | `apply_evolution.py` | 进化建议应用工具（含备份/回滚）|
 | `dump_race.py` | 调试工具：转储缓存原始数据 |

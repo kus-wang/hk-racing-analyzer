@@ -4,6 +4,54 @@
 
 ---
 
+## v1.5.2 — 2026-04-07
+
+### ♻️ 重构：daily_scheduler.py 拆分为 5 个模块
+
+**背景**：`daily_scheduler.py` 单文件膨胀至 1095 行，超过原始 `analyze_race.py` 重构前的体量。按职责拆分为独立模块：
+
+| 模块文件 | 职责 | 行数 |
+|---------|------|------|
+| `daily_scheduler.py` | 调度编排器 + 主流程入口 | ~390 |
+| `scheduler_cache.py` | HTTP 缓存 + HTML 抓取 | ~100 |
+| `race_day.py` | 赛马日检测 | ~80 |
+| `race_results.py` | 实际赛果抓取 + HTML 解析 | ~150 |
+| `evolution_report.py` | 精度计算 + 进化建议 + Markdown 渲染 | ~460 |
+
+**效果**：
+- `daily_scheduler.py` 削减 **64%**（1095 → 393 行）
+- 各模块职责单一，便于独立测试和迭代
+- 对外 CLI 接口完全不变（`--mode predict/backtest`）
+- 中英双版 `SKILL.md` 已同步更新模块说明
+
+---
+
+## v1.5.1 — 2026-04-07
+
+### 🐛 修复：opening odds snapshot 端到端链路（odds_drift 权重 18% 恢复生效）
+
+**根因**：`daily_scheduler.py` 的 `_run_single_prediction()` 保存了 `predicted_odds_snapshot`，但加载存档时未回填各马的 `opening_odds` 字段，导致 `odds_drift_score` 在回测时全部输出中性 50 分，18% 的 drift 权重等于空转。
+
+**修复**：在 `_run_single_prediction()` 返回前，用 `predicted_odds_snapshot` 回填每匹马的 `opening_odds` 字段，使存档中的马匹配时能正确计算赔率走势。
+
+### ✨ 新特征：独赢/位置赔率比值冷门信号
+
+**新增评分维度** `score_win_place_ratio()`：
+
+- 比值 = 独赢赔率 ÷ 位置赔率
+- LOW ratio (< 2.5)：市场将独赢和位置定价接近 → 强烈看好赢 → 高分
+- MEDIUM ratio (2.5-4.0)：正常定价 → 中性
+- HIGH ratio (> 4.0)：市场认为"能进前3但赢不了" → 低分（真正的弱马信号）
+
+**接入位置**：
+- `scoring.py`：新增 `score_win_place_ratio()` 函数
+- `analyze.py`：调用并存储为 `win_place_ratio_score`
+- `betting.py` 的冷门推荐：`get_longshot_tip()` 增加比值过滤，排除"ratio 高但不是真正冷门"的误判
+
+**已知说明**：`running_style` 已在 `analyze.py` 从历史走位推导（第 84-102 行），无需额外改动。
+
+---
+
 ## v1.5.0 — 2026-04-07
 
 ### 💰 智能投注推荐模块
@@ -472,7 +520,7 @@ bet.hkjc.com → fetch_race_odds() → parse_race_odds()
 **变更内容**：
 
 - `SKILL.md` 新增完整投注推荐逻辑（Step 4B/4C/4D）：
-  - 独赢（Win）：Top1 概率 >= 30% 或赔率 <= 4 倍时推荐
+  - 独赢（Win）：Top1 概率 >= 30% 或 赔率 <= 4 倍时推荐
   - 位置（Place）：Top3 任一匹概率 >= 18% 时推荐
   - 连赢（Quinella）：Top1+Top2 概率和 >= 50% 且差距 <= 20% 时推荐
   - 位置连赢（PQ）：Top3 概率分散（差值 > 25%）时推荐三组全包
@@ -734,10 +782,3 @@ bet.hkjc.com → fetch_race_odds() → parse_race_odds()
 - Markdown 报告：前3名预测表、全场分项评分表、投注建议
 
 ---
-
-## 📌 已知问题 / 待优化
-
-| 优先级 | 问题 | 说明 |
-|--------|------|------|
-| 🟡 中 | 配速评分仅使用跑法推导，pace_index 无实测数据 | 权重临时降为10%，待接入分段时间数据后恢复 |
-| 🟢 低 | 实时赔率接入暂搁置 | HKJC新版网站API路径未稳定，待确认后接入 |

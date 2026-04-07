@@ -14,6 +14,7 @@ from scoring import (
     score_odds_value,
     score_odds_drift,
     score_implied_probability,
+    score_win_place_ratio,  # v1.4.13 新增
     score_sectional,
     score_jockey,
     score_trainer,
@@ -50,10 +51,13 @@ def analyze_horse(horse, venue, distance, track_condition, tips_data=None):
         horse["odds_drift_score"] = score_odds_drift(
             horse["opening_odds"], horse["final_odds"]
         )
+        # v1.4.13 新增：独赢/位置赔率比值（冷门信号）
+        horse["win_place_ratio_score"] = score_win_place_ratio(win_odds, place_odds)
     else:
         horse["odds_value_score"] = 50
         horse["implied_prob_score"] = 50
         horse["odds_drift_score"] = 50
+        horse["win_place_ratio_score"] = 50
 
     # HKJC 官方贴士指数评分
     if tips_data and tips_data.get("tips"):

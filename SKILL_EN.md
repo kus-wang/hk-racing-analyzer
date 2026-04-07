@@ -23,7 +23,7 @@ Data-driven horse racing prediction tool combining historical data analysis with
 | **History — Same Condition** | HKJC Horse Profile | Last 5 races at same distance + same venue (time-decayed) |
 | **History — Same Venue** | HKJC Horse Profile | Last 5 races at same venue (any distance, time-decayed) |
 | **Class Fit** | Race Entry | Rating vs. class ceiling/floor |
-| **Odds Value** | HKJC Odds Page | 20-tier fine-grained score + place odds bonus + implied probability fusion (v1.4.11) |
+| **Odds Value** | HKJC Odds Page | 20-tier fine-grained score + place odds bonus + win/place ratio signal (v1.4.13) |
 | **Odds Drift** | HKJC Odds Page | Opening → final odds movement (shortening = strong signal) |
 | **Sectional / Pace Index** | HKJC Results | Running style derived from historical position calls |
 
@@ -144,7 +144,11 @@ python scripts/daily_scheduler.py --mode backtest
 | `weights.py` | Scenario/venue/distance-adaptive dynamic weight calculation |
 | `probability.py` | Softmax normalized probability calculation |
 | `analyze_race.py` | **Entry compatibility layer** (directly calls main.py, CLI unchanged) |
-| `daily_scheduler.py` | Daily automation: race day detection, batch prediction, post-race backtest |
+| `daily_scheduler.py` | **Scheduler orchestrator** (~390 lines): batch prediction workflow + main entry |
+| `scheduler_cache.py` | HTTP cache management + HTML fetching (for scheduler use) |
+| `race_day.py` | Race day detection: checks if a date has racing, returns venue & race count |
+| `race_results.py` | Actual race results scraping + HTML parsing: returns pos/horse no/name |
+| `evolution_report.py` | Backtest accuracy calculation + evolution suggestion generation + Markdown report |
 | `apply_evolution.py` | Evolution applicator (with backup/rollback) |
 | `dump_race.py` | Debug utility: dumps raw cached race data |
 
