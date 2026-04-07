@@ -51,6 +51,7 @@ python scripts/analyze_race.py --cache-stats
 | **HKJC 实时数据 / Real-time Data** | 抓取官方 HKJC 页面 — 排位表、赔率、赛果、马匹档案、投注赔率(bet.hkjc.com) |
 | **投注赔率 / Betting Odds** | 独赢/位置/连赢/三重彩/位置Q 五种投注方式赔率抓取与分析；独赢赔率 20 档精细评分 + 隐含胜率融合 |
 | **智能缓存 / Smart Caching** | 分层 TTL (5分钟–7天)，Zlib 压缩存储，结构化数据优先，空间减少 80-90% |
+| **模块化架构 / Modular Architecture** | daily_scheduler.py 拆分为 5 个独立模块：调度编排器、缓存管理、赛马日检测、赛果抓取、进化报告 |
 | **每日自动化 / Daily Automation** | 14:30 预测，23:30 回测 |
 | **自我进化引擎 / Self-Evolution** | 对比预测与实际赛果，生成权重优化建议 |
 | **可配置权重 / Configurable Weights** | 场景自适应：normal / newcomer / class_up / class_down |
