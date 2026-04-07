@@ -2,7 +2,7 @@
 
 ## 模块架构（v1.4.0 重构后）
 
-> 原始 `analyze_race.py` (~600行) 已拆分为 11 个独立模块，职责清晰，便于维护和测试。
+> 原始 `analyze_race.py` (~600行) 已拆分为 12 个独立模块（v1.5.0 新增 betting.py），职责清晰，便于维护和测试。
 
 | 模块 | 行数 | 职责 |
 |:-----|:----:|:-----|
@@ -15,7 +15,8 @@
 | `output.py` | ~110 | Markdown报告格式化 |
 | `config.py` | ~80 | URL常量、缓存TTL、权重默认值、场地/状况映射 |
 | `weights.py` | ~70 | 场景/场地/距离适配的动态权重计算 |
-| `probability.py` | ~40 | Softmax归一化概率计算 |
+| `probability.py` | ~40 | Softmax归一化概率计算（含动态温度）|
+| `betting.py` | ~300 | 投注推荐模块（WIN/PLACE/Q/TRIO 价值指数 + 回测命中验证，v1.5.0）|
 | `analyze_race.py` | ~27 | **入口兼容层**（直接调用 main.py，CLI用法不变）|
 
 ---
@@ -26,12 +27,12 @@
 
 ### 基础权重（默认场景）
 
-> 最后更新：2026-04-05（v1.4.11 赔率权重优化后）
+> 最后更新：2026-04-07（v1.4.12 + v1.5.0，与 `config.py` DEFAULT_WEIGHTS 完全一致）
 
 | 维度 | 子维度 | 权重 | 变化 | 说明 |
 |------|--------|------|------|------|
 | **历史战绩** | 同距离+同场地近5场 | **13%** | ↓ -3% | 降低历史数据权重，由赔率共识补充 |
-| | 同场地（不限距离）近5场 | **15%** | ↓ -3% | 同上 |
+| | 同场地（不限距离）近5场 | **17%** | ↑ +2% | tips_index 6%→4% 释放权重（v1.4.12）|
 | | 班次适配度（评分与班次匹配） | **7%** | ↓ -1% | 次要因素 |
 | **赔率** | 临场赔率综合评分 | **22%** | **↑ +7%** | 独赢20档+位置赔率加成+隐含胜率融合（v1.4.11）|
 | | 赔率走势（开盘→临场变化幅度） | **18%** | **↑ +3%** | 反映资金流向，市场信号更受重视 |
@@ -39,12 +40,16 @@
 | **骑师** | — | **4%** | ↓ -1% | 基于历史战绩中骑师×本马的胜率/前3率动态计算 |
 | **练马师** | — | **3%** | ↓ -1% | 基于历史战绩中练马师×本马的胜率/前3率动态计算 |
 | **档位** | — | **4%** | ↓ -1% | 同距离档位胜率统计 |
-| **HKJC贴士指数** | — | **6%** | — | 官方每日贴士指数（不变） |
+| **HKJC贴士指数** | — | **4%** | ↓ -2% | v1.4.12：降低与赔率共线重复信号 |
 | **外部专家预测** | — | **0%** | **↓ -4%** | 信息来源不稳定，已移除 |
 | **赔率系合计** | | **40%** | **↑ +10%** | 赔率正式成为预测主导信号 |
 | **合计** | | **100%** | | |
 
-> ⚠️ **v1.4.11 赔率评分融合**：赔率综合评分 = `独赢分档(20档)×0.4 + 隐含胜率×0.6`，cap=0.50压缩极端gap。1.8倍大热门→模型预测约80.6%（赔率隐含~51%+叠加正向信号→合理高置信度）。Softmax T=4.0，PROB_CAP=0.88。
+> ⚠️ **v1.4.11 赔率评分融合**：赔率综合评分 = `独赢分档(20档)×0.4 + 隐含胜率×0.6`，cap=0.50 压缩极端 gap。
+>
+> ⚠️ **v1.4.12 动态 Softmax T**：温度不再固定，根据场内赔率离散度自动调节（T=3~6），PROB_CAP=0.88。详见下方「概率计算公式」章节。
+>
+> ⚠️ **v1.4.12 时间衰减加权**：历史战绩引入时间衰减（近30天×1.0，31-90天×0.8，91-180天×0.6，>180天×0.4）。详见下方「评分标准」章节。
 
 > ⚠️ **权重说明**：骑师/练马师已从固定值50改为基于本马历史战绩的动态评分（见下方评分标准）。
 
@@ -52,42 +57,68 @@
 
 ## 场景自适应权重调整
 
+> 以下为基于 v1.4.12 DEFAULT_WEIGHTS 的绝对值调整。
+
 ### 跑马地 (HV) 场次
-- 档位权重提高：5% → 8%（转弯急，内档优势明显）
-- 对应减少：同场地历史战绩 10% → 7%
+- 档位权重：4% → **8%**（转弯急，内档优势明显）
+- 对应减少：同场地历史战绩 17% → **13%**
 
 ### 沙田 (ST) 长途赛 (1800m+)
-- 配速权重提高：15% → 20%（长途配速策略更重要）
-- 对应减少：临场赔率绝对值 15% → 10%
+- 配速权重：8% → **13%**（长途配速策略更重要）
+- 对应减少：临场赔率绝对值 22% → **17%**
 
 ### 泥地赛事
 - 增加"泥地适应性"子维度，权重 10%
-- 从"同距离同场地"历史战绩 15% → 5%，专门看泥地成绩
-- 同场地历史战绩 10% → 0%（全换为泥地相关维度）
+- 同距离同场地历史战绩：13% → **5%**（专看泥地成绩）
+- 同场地历史战绩：17% → **5%**
+- 剩余 2% 补充至班次适配度
 
 ### 初出马（新马）
-- 同距离同场地历史战绩权重降为 0%（无参考）
-- 增加"晨操状态/评分"维度替代，权重 15%
-- 班次适配度提高：8% → 15%
-- 贴士指数提高：6% → 8%（新马更依赖官方贴士参考）
+- 同距离同场地历史战绩：13% → **0%**（无参考）
+- 同场地历史战绩：17% → **0%**
+- 班次适配度：7% → **15%**
+- 贴士指数：4% → **8%**
+- 补回权重分配给骑师（4%→**12%**）和练马师（3%→**8%**）
 
 ### 降班马（班次降落）
-- 班次适配度提高：8% → 15%
-- 赔率走势提高：13% → 18%（市场对降班马的反应更灵敏）
-- 贴士指数降低：6% → 4%
-- 对应减少：外部专家预测 4% → 0%
+- 班次适配度：7% → **15%**
+- 赔率走势：18% → **22%**（市场对降班马反应更灵敏）
+- 贴士指数：4% → **2%**
+- 同距离同场地：13% → **8%**
+- 同场地：17% → **13%**
 
 ### 升班马（班次提升）
-- 历史战绩降权：同距离同场地 15% → 8%（高班竞争不同）
-- 赔率走势提高：13% → 18%
-- 贴士指数降低：6% → 4%
-- 对应减少：外部专家预测 4% → 0%
+- 同距离同场地：13% → **7%**（高班竞争不同）
+- 同场地：17% → **12%**
+- 赔率走势：18% → **22%**
+- 贴士指数：4% → **2%**
 
 ---
 
 ## 评分标准
 
 ### 历史战绩评分（子维度：同距离+同场地近5场）(0-100)
+
+> **v1.4.12 新增：时间衰减加权** — 每场比赛胜/前3次数均乘以时间权重后再归一化。
+
+**时间衰减系数**（`_time_weight()`）：
+
+| 历史战绩时间范围 | 权重系数 |
+|----------------|---------|
+| 近30天 | × 1.0 |
+| 31-90天 | × 0.8 |
+| 91-180天 | × 0.6 |
+| > 180天 | × 0.4 |
+
+**计算方式**：
+```
+weighted_wins  = Σ(名次==1 × 时间权重)
+weighted_top3  = Σ(名次≤3 × 时间权重)
+total_weight   = Σ(时间权重)
+归一化胜率 = weighted_wins / (total_weight / n)  （n=实际出赛场数）
+```
+
+**评分分档**（近5场为窗口，超过5场只取最近5场）：
 
 | 条件 | 分数范围 | 备注 |
 |------|----------|------|
@@ -163,37 +194,54 @@
 
 ## 概率计算公式（优化版）
 
-### 核心改进：Softmax 归一化 + 概率上限约束
+### 核心改进：Softmax 归一化 + 动态温度 + 概率上限约束
+
+**v1.4.12 动态温度机制**（`probability.py` → `dynamic_temperature()`）：
 
 ```python
-import numpy as np
+def dynamic_temperature(win_odds_map: dict) -> float:
+    """
+    根据场内赔率离散度自动调节 Softmax 温度。
+    热门马赔率越悬殊 → T越高 → 抑制热门马独占概率
+    赔率分布越均匀 → T越低 → 让模型判断更明确
+    """
+    odds_values = list(win_odds_map.values())
+    if len(odds_values) < 2:
+        return 4.0  # 默认值
 
-def calculate_probability(scores, temperature=2.0):
-    """
-    使用 Softmax 归一化计算概率，避免线性归一化的极端偏差。
-    
-    参数：
-        scores: 各马匹综合评分列表
-        temperature: 温度参数，值越大概率越均摊（建议 1.2-2.0）
-                     当前值 2.0（↑ 原1.5，2026-04-02 进化建议1）
-    
-    返回：
-        各马匹胜出概率列表（合计 100%）
-    """
-    scores = np.array(scores, dtype=float)
-    
-    # Softmax 归一化
-    exp_scores = np.exp(scores / temperature)
-    probabilities = exp_scores / exp_scores.sum()
-    
-    # 上限约束：单匹马概率不超过 50%（赛马极少有超过50%胜率）
-    probabilities = np.clip(probabilities, 0, 0.50)
-    
-    # 重新归一化
-    probabilities = probabilities / probabilities.sum()
-    
-    return (probabilities * 100).round(1).tolist()
+    max_odds = max(odds_values)
+    min_odds = min(odds_values)
+    ratio = max_odds / min_odds  # 离散度
+
+    if ratio > 20:
+        return 6.0   # 悬殊场：超级大热门 vs 极大冷门
+    elif ratio > 10:
+        return 5.0   # 大差异场：明显热门存在
+    elif ratio > 5:
+        return 4.0   # 正常场（config 默认值）
+    else:
+        return 3.0   # 均衡场：市场无共识，降低T让模型更聚焦
 ```
+
+**概率计算**（`probability.py` → `softmax_probability()`）：
+
+```python
+def softmax_probability(scores, temperature=4.0, cap=0.88):
+    # 1. Softmax 归一化
+    exp_scores = [math.exp((s - max_score) / temperature) for s in scores]
+    total_exp = sum(exp_scores)
+    probs = [e / total_exp for e in exp_scores]
+
+    # 2. 概率上限约束（cap=0.88，即单匹马概率不超过88%）
+    probs = [min(p, cap) for p in probs]
+
+    # 3. 重新归一化，确保合计=100%
+    total_prob = sum(probs)
+    probs = [p / total_prob for p in probs]
+    return probs
+```
+
+> **v1.4.11 赔率评分融合**：赔率综合评分 = `独赢分档(20档)×0.4 + 隐含胜率×0.6`，cap=0.50 压缩极端 gap。
 
 ### 综合评分计算（含场景权重）
 
@@ -208,18 +256,19 @@ def get_weights(venue, distance, track_type, race_scenario):
         "class_down"  - 降班马
         "class_up"    - 升班马
     """
-    # 默认权重（最新版本，2026-03-30 更新）
+    # 默认权重（v1.4.12，与 config.py DEFAULT_WEIGHTS 一致）
     weights = {
-        "history_same_condition": 0.18,   # 同距离+同场地历史战绩（↑ 原0.15）
-        "history_same_venue":     0.13,   # 同场地（不限距离）历史战绩（↑ 原0.10）
-        "class_fit":              0.08,   # 班次适配度
-        "odds_value":             0.15,   # 临场赔率绝对值
-        "odds_drift":             0.13,   # 赔率走势变化
-        "sectional":              0.15,   # 配速/分段指数
-        "jockey":                 0.05,   # 骑师（↓ 次要因素，原0.08，动态评分）
-        "trainer":                0.04,   # 练马师（↓ 次要因素，原0.07，动态评分）
-        "barrier":                0.05,   # 档位
-        "expert":                 0.04,   # 专家预测
+        "history_same_condition": 0.13,   # 同距离+同场地历史战绩（含时间衰减）
+        "history_same_venue":     0.17,   # 同场地（不限距离）历史战绩
+        "class_fit":              0.07,   # 班次适配度
+        "odds_value":             0.22,   # 临场赔率综合评分（v1.4.11）
+        "odds_drift":             0.18,   # 赔率走势（v1.4.12 opening_odds 修复）
+        "sectional":              0.08,   # 配速/分段指数（临时降权）
+        "jockey":                 0.04,   # 骑师（基于本马历史战绩动态计算）
+        "trainer":                0.03,   # 练马师（基于本马历史战绩动态计算）
+        "barrier":                0.04,   # 档位
+        "tips_index":             0.04,   # HKJC 贴士指数（v1.4.12 降低共线）
+        "expert":                 0.00,   # 已移除
     }
     
     # 场景调整
@@ -227,40 +276,38 @@ def get_weights(venue, distance, track_type, race_scenario):
         weights["history_same_condition"] = 0.00
         weights["history_same_venue"]     = 0.00
         weights["class_fit"]              = 0.15
-        weights["expert"]                 = 0.00
-        # 补回的权重分配给骑师和练马师（初出马这两项更重要）
-        weights["jockey"]   = 0.15
-        weights["trainer"]  = 0.13
-    
+        weights["tips_index"]             = 0.08
+        weights["jockey"]                 = 0.12
+        weights["trainer"]                = 0.08
+
     elif race_scenario == "class_down":
-        weights["class_fit"]  = 0.15
-        weights["odds_drift"] = 0.18
-        weights["expert"]     = 0.00
-        weights["history_same_condition"] = 0.10
-        weights["history_same_venue"]     = 0.07
-    
+        weights["class_fit"]              = 0.15
+        weights["odds_drift"]             = 0.22
+        weights["tips_index"]             = 0.02
+        weights["history_same_condition"] = 0.08
+        weights["history_same_venue"]     = 0.13
+
     elif race_scenario == "class_up":
-        weights["history_same_condition"] = 0.08
-        weights["odds_drift"] = 0.18
-        weights["expert"]     = 0.00
-        weights["history_same_condition"] = 0.08
-        weights["history_same_venue"]     = 0.09
-    
+        weights["history_same_condition"] = 0.07
+        weights["history_same_venue"]     = 0.12
+        weights["odds_drift"]             = 0.22
+        weights["tips_index"]             = 0.02
+
     # 场地调整
     if venue == "HV":
-        weights["barrier"]              += 0.03
-        weights["history_same_venue"]   -= 0.03
-    
+        weights["barrier"]              = 0.08   # 转弯急，内档优势
+        weights["history_same_venue"]   -= 0.04
+
     # 距离调整
     if distance >= 1800:
         weights["sectional"]  += 0.05
         weights["odds_value"] -= 0.05
-    
+
     # 泥地调整
     if track_type == "dirt":
-        weights["history_same_condition"] = 0.05  # 专看泥地成绩
-        weights["history_same_venue"]     = 0.00
-        weights["class_fit"]             += 0.05
+        weights["history_same_condition"] = 0.05
+        weights["history_same_venue"]     = 0.05
+        weights["class_fit"]             += 0.02
     
     return weights
 ```
@@ -366,9 +413,11 @@ def get_weights(venue, distance, track_type, race_scenario):
 
 ## 修订记录
 
-| 日期 | 修改内容 |
-|------|---------|
-| 2026-04-02 | **v1.4.3 进化建议应用**：①Softmax温度1.5→2.0；②history_same_condition 18%→16%；③odds_drift 13%→15%；④sectional 15%→10%（临时）；⑤history_same_venue 13%→18%；⑥score_history引入时间衰减（近30天×1.0，31-90天×0.8，91-180天×0.6，>180天×0.4）|
-| 2026-04-01 | **v1.4.0 模块化重构**：analyze_race.py (~600行) 拆分为 11 个独立模块（main/analyze/scoring/fetch/parse/cache/output/config/weights/probability），入口兼容层保留 CLI 不变 |
-| 2026-03-30 | 骑师/练马师评分动态化：权重从8%/7%下调至5%/4%（次要因素），同时将固定50分改为基于历史战绩的动态统计评分；释放6%补充至历史战绩维度（同条件+3%→18%，同场+3%→13%）；新增骑师/练马师评分标准文档 |
-| 2026-03-30 | 初版权重优化：历史战绩拆分为3个子维度；赔率拆分为绝对值+走势；配速改为基于分段时间的量化指数；概率计算改用 Softmax+上限约束；新增场景自适应权重、数据充足度标注、冷门筛选逻辑 |
+| 日期 | 版本 | 修改内容 |
+|------|------|---------|
+| 2026-04-07 | v1.5.0 | betting.py 投注推荐模块上线（WIN/PLACE/Q/TRIO 四种玩法 + 价值指数 + 回测命中验证）；`detect_race_day()` 修复场地检测误判 |
+| 2026-04-07 | v1.4.12 | 进化建议：①opening_odds 快照修复（drift 不再失效）；②tips_index 6%→4%；③hist_same_condition 首胜加权 +10→+3；④Softmax T 动态化（T=3~6）|
+| 2026-04-05 | v1.4.11 | 赔率权重 30%→40%（odds_value 22% + odds_drift 18%）；新增隐含胜率融合评分；20档精细分档；Softmax T=4.0，PROB_CAP=0.88 |
+| 2026-04-02 | v1.4.3 | Softmax 温度 1.5→2.0；历史战绩时间衰减加权（近30天×1.0，31-90天×0.8，91-180天×0.6，>180天×0.4）|
+| 2026-04-01 | v1.4.0 | 模块化重构：analyze_race.py 拆分为 11 个独立模块 |
+| 2026-03-30 | — | 骑师/练马师评分动态化；初版权重优化；Softmax+概率上限约束 |

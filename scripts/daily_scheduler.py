@@ -220,7 +220,14 @@ def run_batch_predictions(race_info: dict) -> dict:
         if result:
             archive["races"][str(race_no)] = result
             top3 = result.get("top3_predicted", [])
-            log(f"     预测前3：{top3}")
+            # 投注建议（简洁显示）
+            bet = result.get("betting_recommendation")
+            if bet:
+                bet_name = {"WIN": "独赢", "PLACE": "位置", "Q": "连赢", "TRIO": "三重彩"}.get(bet.get("bet_type", ""), bet.get("bet_type", ""))
+                sels = " ".join(f"#{s}" for s in bet.get("selections", []))
+                log(f"     预测前3：{top3}  |  推荐：{bet_name} {sels}")
+            else:
+                log(f"     预测前3：{top3}")
         else:
             log(f"     ⚠ 第 {race_no} 场预测失败，跳过")
 
