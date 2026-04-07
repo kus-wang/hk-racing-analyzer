@@ -107,7 +107,7 @@ def score_history_same_condition(results, venue, distance, tolerance=200):
     if wins >= 1:
         base = 55
         if any(p == 1 for p in positions_raw[-3:]):
-            base += 10
+            base += 3   # v1.4.12: 近3场有冠军加成 10→3，避免"单胜马"被过度拉高至65分
         return base
     if top3 >= 2:
         return 42

@@ -132,7 +132,7 @@ def detect_race_day(date_str: str) -> dict | None:
     """
     log(f"🔍 检测 {date_str} 是否为赛马日...")
 
-    # 尝试沙田
+    # 依次检测沙田和跑马地
     for venue_code, venue_name in [("ST", "沙田"), ("HV", "跑马地")]:
         url = f"{RACE_DATE_URL}?RaceDate={date_str}&Venue={venue_code}&RaceNo=1"
         ckey = f"racecard_{date_str}_{venue_code}"
@@ -142,9 +142,15 @@ def detect_race_day(date_str: str) -> dict | None:
             continue
 
         # 检测是否存在赛事数据（排位表特征标志）
-        if "没有赛事资料" in html or "No Race Information" in html:
+        if "没有赛事资料" in html or "没有相关资料" in html or "No Race Information" in html:
             continue
         if "RaceNo" not in html and "马名" not in html and "HorseNo" not in html:
+            continue
+
+        # 验证实际场地（HKJC 旧版 API 可能忽略 Venue 参数，返回当天唯一有赛事的场地）
+        actual_venues = re.findall(r"Racecourse=(ST|HV)", html)
+        if actual_venues and actual_venues[0] != venue_code:
+            log(f"  ⚠️ 请求 {venue_name}，但页面实际为 {actual_venues[0]}，跳过")
             continue
 
         # 提取总场次数
@@ -268,6 +274,10 @@ def _run_single_prediction(script_path: str, date_str: str, venue: str, race_no:
         sorted_horses = sorted(horses, key=lambda h: h.get("total_score", 0), reverse=True)
         top3 = [h.get("horse_no") or h.get("no") for h in sorted_horses[:3]]
 
+        # v1.4.13: 生成投注推荐
+        from betting import determine_bet_type
+        bet_rec = determine_bet_type(sorted_horses)
+
         return {
             "horses": horses,
             "top3_predicted": top3,
@@ -279,6 +289,14 @@ def _run_single_prediction(script_path: str, date_str: str, venue: str, race_no:
                 str(h.get("horse_no") or h.get("no")): h.get("probability", 0)
                 for h in horses
             },
+            # v1.4.12: 保存预测时各马赔率快照，供回测时作为 opening_odds 参考
+            "predicted_odds_snapshot": {
+                str(h.get("horse_no") or h.get("no")): h.get("final_odds")
+                for h in horses
+                if h.get("final_odds") is not None
+            },
+            # v1.4.13: 投注推荐
+            "betting_recommendation": bet_rec,
             "raw_output": data,
         }
     except subprocess.TimeoutExpired:
@@ -481,6 +499,11 @@ def compare_and_evolve(prediction_archive: dict, actual_results: dict) -> dict:
     total_top1_hits  = 0
     total_top3_hits  = 0
     total_races_done = 0
+    total_bet_hits   = 0           # v1.4.13: 投注推荐命中总数
+    bet_type_stats   = {}           # v1.4.13: 按玩法统计 {"WIN": {"total": N, "hits": N}, ...}
+
+    # v1.4.13: 导入投注验证
+    from betting import check_bet_hit
 
     # 逐场对比
     for race_no_str, pred in races.items():
@@ -493,6 +516,10 @@ def compare_and_evolve(prediction_archive: dict, actual_results: dict) -> dict:
         top3_actual = [h["no"] for h in actual[:3] if h["pos"] <= 3]
         winner      = actual[0]["no"] if actual else None
 
+        # v1.4.12: 提取预测时赔率快照，用于 drift 统计分析
+        odds_snapshot = pred.get("predicted_odds_snapshot", {})
+        odds_available = len(odds_snapshot) > 0
+
         # 命中计算
         top1_hit  = (len(top3_pred) > 0 and str(top3_pred[0]) == str(winner))
         top3_hits = len(set(str(p) for p in top3_pred) & set(str(a) for a in top3_actual))
@@ -501,6 +528,19 @@ def compare_and_evolve(prediction_archive: dict, actual_results: dict) -> dict:
         if top1_hit:
             total_top1_hits += 1
         total_top3_hits += top3_hits
+
+        # ── v1.4.13: 投注推荐命中验证 ──
+        bet_rec = pred.get("betting_recommendation")
+        bet_result = None
+        if bet_rec:
+            bet_result = check_bet_hit(bet_rec, actual)
+            bet_type_key = bet_rec.get("bet_type", "UNKNOWN")
+            if bet_type_key not in bet_type_stats:
+                bet_type_stats[bet_type_key] = {"total": 0, "hits": 0}
+            bet_type_stats[bet_type_key]["total"] += 1
+            if bet_result and bet_result.get("hit"):
+                bet_type_stats[bet_type_key]["hits"] += 1
+                total_bet_hits += 1
 
         # 评分偏差分析（哪些马被高估/低估）
         scores = pred.get("scores", {})
@@ -530,11 +570,15 @@ def compare_and_evolve(prediction_archive: dict, actual_results: dict) -> dict:
             "top3_hits":     top3_hits,
             "overestimated": overestimated,
             "underestimated": underestimated,
+            # v1.4.13: 投注推荐回测
+            "bet_recommendation": bet_rec,
+            "bet_result":         bet_result,
         }
         race_reports.append(race_report)
 
+        bet_status = "✅" if (bet_result and bet_result.get("hit")) else "❌"
         status = "✅" if top1_hit else ("🔶" if top3_hits >= 2 else "❌")
-        log(f"  场次 {race_no_str}：{status} 预测={top3_pred} 实际={top3_actual} 独赢命中={top1_hit}")
+        log(f"  场次 {race_no_str}：{status} 预测={top3_pred} 实际={top3_actual} 独赢命中={top1_hit} 投注={bet_status}")
 
     # 整体精度
     if total_races_done == 0:
@@ -543,11 +587,15 @@ def compare_and_evolve(prediction_archive: dict, actual_results: dict) -> dict:
 
     top1_rate  = total_top1_hits  / total_races_done
     top3_rate  = total_top3_hits  / (total_races_done * 3)
+    bet_hit_rate = total_bet_hits / total_races_done if total_races_done > 0 else 0
 
     log(f"\n📈 整体精度：独赢命中率 {top1_rate:.1%}，前3命中率 {top3_rate:.1%}")
+    log(f"💰 投注推荐命中率：{bet_hit_rate:.1%}（{total_bet_hits}/{total_races_done}）")
 
     # 生成进化建议
-    evolution_suggestions = _generate_evolution_suggestions(race_reports, top1_rate, top3_rate)
+    evolution_suggestions = _generate_evolution_suggestions(
+        race_reports, top1_rate, top3_rate, bet_type_stats
+    )
 
     backtest_report = {
         "meta": {
@@ -559,6 +607,9 @@ def compare_and_evolve(prediction_archive: dict, actual_results: dict) -> dict:
             "top3_hit_count":   total_top3_hits,
             "top1_rate":        round(top1_rate, 4),
             "top3_rate":        round(top3_rate, 4),
+            "bet_hit_count":    total_bet_hits,
+            "bet_hit_rate":     round(bet_hit_rate, 4),
+            "bet_type_stats":   bet_type_stats,
             "analyzed_at":      datetime.now().isoformat(),
         },
         "race_reports":          race_reports,
@@ -568,7 +619,7 @@ def compare_and_evolve(prediction_archive: dict, actual_results: dict) -> dict:
     return backtest_report
 
 
-def _generate_evolution_suggestions(race_reports: list, top1_rate: float, top3_rate: float) -> list:
+def _generate_evolution_suggestions(race_reports: list, top1_rate: float, top3_rate: float, bet_type_stats: dict = None) -> list:
     """
     根据回测数据生成具体的权重/逻辑优化建议。
     这是「自我进化」的核心 —— 不直接修改，而是输出结构化建议供用户审阅。
@@ -698,6 +749,33 @@ def _generate_evolution_suggestions(race_reports: list, top1_rate: float, top3_r
             "code_change": None,
         })
 
+    # ── v1.4.13 建议5：投注推荐玩法命中率分析 ──
+    if bet_type_stats and total_races >= 3:
+        bet_names_map = {"WIN": "独赢", "PLACE": "位置", "Q": "连赢", "TRIO": "三重彩"}
+        low_rate_types = []
+        for bt, stats in bet_type_stats.items():
+            if stats["total"] >= 3:
+                rate = stats["hits"] / stats["total"]
+                if rate < 0.25:
+                    name = bet_names_map.get(bt, bt)
+                    low_rate_types.append(f"{name}（{stats['hits']}/{stats['total']}，{rate:.0%}）")
+
+        if low_rate_types:
+            suggestions.append({
+                "type":       "logic_review",
+                "priority":   "medium",
+                "dimension":  "betting",
+                "title":      f"投注推荐玩法命中率偏低：{', '.join(low_rate_types)}",
+                "detail":     (
+                    "部分投注玩法命中率持续偏低。"
+                    "可能原因：① 场型判断阈值需要调整（如三强场概率阈值从60%提高到65%）；"
+                    "② 价值指数过滤不够严格；"
+                    "③ 特定玩法本身命中率低（如三重彩理论命中率约5-8%），属于正常现象。"
+                    "建议：观察更多场次后再决定是否调整场型判断参数。"
+                ),
+                "code_change": None,
+            })
+
     return suggestions
 
 
@@ -722,25 +800,66 @@ def write_evolution_report(backtest_report: dict) -> str:
         f"> 预测场次：{meta.get('total_races', 0)}场 | "
         f"独赢命中：{meta.get('top1_hit_count',0)}/{meta.get('total_races',0)} "
         f"({meta.get('top1_rate',0):.1%}) | "
-        f"前3命中（平均每场）：{meta.get('top3_rate',0):.1%}",
+        f"前3命中（平均每场）：{meta.get('top3_rate',0):.1%} | "
+        f"投注推荐命中：{meta.get('bet_hit_count',0)}/{meta.get('total_races',0)} "
+        f"({meta.get('bet_hit_rate',0):.1%})",
         "",
         "---",
         "",
         "## 📊 逐场对比",
         "",
-        "| 场次 | 预测前3 | 实际前3 | 独赢命中 | 前3命中数 |",
-        "|------|---------|---------|---------|---------|",
+        "| 场次 | 预测前3 | 实际前3 | 独赢 | 前3 | 投注推荐 | 投注命中 |",
+        "|------|---------|---------|------|-----|----------|---------|",
     ]
+
+    # v1.4.13: 投注推荐玩法中文名映射
+    bet_names_map = {"WIN": "独赢", "PLACE": "位置", "Q": "连赢", "TRIO": "三重彩"}
 
     for r in race_reports:
         top1_icon = "✅" if r["top1_hit"] else "❌"
+        # 投注推荐列
+        bet_rec = r.get("bet_recommendation")
+        bet_result = r.get("bet_result")
+        if bet_rec and bet_result:
+            bt = bet_rec.get("bet_type", "")
+            bt_name = bet_names_map.get(bt, bt)
+            sels = bet_rec.get("selections", [])
+            sel_text = " ".join(f"#{s}" for s in sels)
+            bet_col = f"{bt_name} {sel_text}"
+            bet_hit_icon = "✅" if bet_result.get("hit") else "❌"
+        else:
+            bet_col = "-"
+            bet_hit_icon = "-"
         lines.append(
             f"| 第{r['race_no']}场 "
             f"| {', '.join(r['top3_predicted'])} "
             f"| {', '.join(r['top3_actual'])} "
             f"| {top1_icon} "
-            f"| {r['top3_hits']}/3 |"
+            f"| {r['top3_hits']}/3 "
+            f"| {bet_col} "
+            f"| {bet_hit_icon} |"
         )
+
+    # ── v1.4.13: 投注推荐统计板块 ──
+    bet_type_stats = meta.get("bet_type_stats", {})
+    if bet_type_stats:
+        lines += [
+            "",
+            "---",
+            "",
+            "## 💰 投注推荐回测统计",
+            "",
+            "| 玩法 | 推荐场次 | 命中场次 | 命中率 |",
+            "|------|---------|---------|--------|",
+        ]
+        for bt, stats in bet_type_stats.items():
+            bt_name = bet_names_map.get(bt, bt)
+            total = stats["total"]
+            hits = stats["hits"]
+            rate = f"{hits / total:.1%}" if total > 0 else "-"
+            lines.append(f"| {bt_name} | {total} | {hits} | {rate} |")
+
+        lines.append("")
 
     lines += [
         "",

@@ -8,6 +8,8 @@ HKJC 赛马分析工具 - 输出格式化模块
 
 from datetime import datetime
 
+from betting import determine_bet_type, format_bet_recommendation_line
+
 
 def classify_betting_style(sorted_horses):
     """
@@ -170,19 +172,12 @@ def format_markdown_output(race_info, horses, reserve_horses=None):
     lines.append(f"| **{emoji_s} {style_name}** | {reason} | {strategy} |")
     lines.append("")
 
-    # ── 投注建议 ──────────────────────────────────────────────────
-    # 投注判断逻辑见 SKILL.md（AI 根据概率分布自主推荐）
-    lines.append("\n### 💡 投注建议（仅供参考）\n")
-    if sorted_horses:
-        w = sorted_horses[0]
-        lines.append(f"**推荐独赢**: {w['no']}号 {w['name']}（概率 {w['probability']:.1f}%，评分 {w['total_score']:.1f}）")
-    if len(sorted_horses) >= 2:
-        q0, q1 = sorted_horses[0], sorted_horses[1]
-        lines.append(f"**推荐连赢**: {q0['no']}, {q1['no']}（{q0['name']} + {q1['name']}）")
-    if len(sorted_horses) >= 3:
-        lines.append(
-            f"**推荐三重彩**: {sorted_horses[0]['no']}, {sorted_horses[1]['no']}, {sorted_horses[2]['no']}"
-        )
+    # ── 智能投注推荐（v1.4.13）──────────────────────────────────
+    bet_rec = determine_bet_type(sorted_horses)
+    if bet_rec:
+        lines.append("\n### 💰 最推荐投注方案\n")
+        lines.append(f"> {format_bet_recommendation_line(bet_rec)}")
+        lines.append(f"\n**理由**：{bet_rec.get('reason', '')}")
 
     lines.append("\n---")
     lines.append(f"*数据来源：香港赛马会 (HKJC) | 分析时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}*")

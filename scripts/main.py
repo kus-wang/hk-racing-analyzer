@@ -22,7 +22,7 @@ if sys.platform == "win32":
 
 from config import RACE_CARD_URL
 from weights import get_weights
-from probability import softmax_probability
+from probability import softmax_probability, dynamic_temperature
 from cache import cache_stats, cache_clear
 from fetch import fetch_url_with_playwright, fetch_tips_index, fetch_horse_history, fetch_race_odds
 from parse import parse_race_entries, validate_race_entries
@@ -385,15 +385,20 @@ def main():
     # ── 导入 analyze_horse（避免循环导入）───────────────────────
     from analyze import analyze_horse
 
-    # ── 将赔率数据注入到每匹马（v1.4.11 增强：含全场赔率字典）─────────
+    # ── 将赔率数据注入到每匹马（v1.4.12 增强：含全场赔率字典）─────────
     win_odds_map = odds_data.get("win", {})           # {"#1": 1.8, "#2": 21.0, ...}
     place_odds_map = odds_data.get("place", {})       # {"#1": 1.4, "#2": 4.0, ...}
     for horse in regular_horses:
         horse_key = f"#{horse['no']}"
-        horse["final_odds"] = win_odds_map.get(horse_key)    # 临场独赢赔率
-        horse["place_odds"] = place_odds_map.get(horse_key) # 位置赔率（v1.4.11新增）
-        horse["opening_odds"] = None                       # 开盘赔率（待后续扩展）
-        horse["all_win_odds"] = win_odds_map              # 全场独赢赔率字典（v1.4.11新增）
+        # v1.4.12 fix: 预测时将抓取到的赔率同时作为 opening_odds 存储，
+        # 用于回测时 drift 对比（赛前预测快照 vs 赛前最终赔率）。
+        # 若同一场次先后多次预测，最早一次的赔率才是真正的"开盘赔率"；
+        # 此处取当前抓取的赔率，下次预测/回测时即可作为 opening_odds 参考。
+        final_odds = win_odds_map.get(horse_key)
+        horse["final_odds"] = final_odds              # 临场独赢赔率
+        horse["place_odds"] = place_odds_map.get(horse_key)  # 位置赔率
+        horse["opening_odds"] = final_odds            # v1.4.12: 当前赔率即为快照赔率
+        horse["all_win_odds"] = win_odds_map              # 全场独赢赔率字典
 
     # 各维度评分（传入贴士指数数据）
     for horse in regular_horses:
@@ -401,8 +406,11 @@ def main():
         horse["total_score"] = calculate_total_score(horse, weights)
 
     # 概率计算（Softmax + 上限约束）
+    # v1.4.12: 根据场内赔率离散度动态调整温度参数
     scores = [h["total_score"] for h in regular_horses]
-    probs = softmax_probability(scores)
+    dyn_temp = dynamic_temperature(win_odds_map)
+    print(f"🌡️  Softmax 温度（动态）: T={dyn_temp}（赔率离散度判断）")
+    probs = softmax_probability(scores, temperature=dyn_temp)
     for horse, prob in zip(regular_horses, probs):
         horse["probability"] = prob
 
