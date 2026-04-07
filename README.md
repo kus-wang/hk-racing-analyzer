@@ -46,7 +46,7 @@ python scripts/analyze_race.py --cache-stats
 
 | 功能 / Feature | 描述 / Description |
 |----------------|---------------------|
-| **多维度分析 / Multi-dimensional** | 10个加权维度：赔率综合(22%)、赔率走势(18%)、同距离同场地历史(13%)、同场地历史(15%)、配速(8%)、骑师(4%)、练马师(3%)、档位(4%)、班次适配(7%)、贴士指数(6%) |
+| **多维度分析 / Multi-dimensional** | 10个加权维度：赔率综合(22%)、赔率走势(18%)、同距离同场地历史(13%)、同场地历史(17%)、配速(8%)、骑师(4%)、练马师(3%)、档位(4%)、班次适配(7%)、贴士指数(4%) |
 | **后备马信息 / Reserve Horses** | 正选退赛时后备马自动递补，信息完整展示于分析报告中 |
 | **HKJC 实时数据 / Real-time Data** | 抓取官方 HKJC 页面 — 排位表、赔率、赛果、马匹档案、投注赔率(bet.hkjc.com) |
 | **投注赔率 / Betting Odds** | 独赢/位置/连赢/三重彩/位置Q 五种投注方式赔率抓取与分析；独赢赔率 20 档精细评分 + 隐含胜率融合 |
@@ -65,20 +65,28 @@ hk-racing-analyzer/
 ├── README.md                  # 本文件 / This file
 ├── RELEASE_NOTES.md           # 完整更新日志 / Full changelog
 ├── requirements.txt           # Python 依赖 / Python dependencies
+├── SECURITY_AUDIT_v1.5.0.md   # 安全审计报告 / Security audit report
 ├── scripts/
-│   ├── analyze_race.py        # 主入口 / Main entry
 │   ├── main.py                # 模块化 CLI (v1.4+) / Modular CLI
+│   ├── analyze_race.py        # 主入口 / Main entry
 │   ├── daily_scheduler.py     # 自动化调度 / Automation runner
 │   ├── apply_evolution.py     # 进化建议工具 / Evolution suggester
 │   ├── config.py              # 配置常量 / Constants & parameters
 │   ├── weights.py             # 权重加载 / Weight loading
 │   ├── scoring.py             # 评分引擎 / Per-dimension scoring
+│   ├── probability.py         # Softmax 概率计算 / Probability calculation
+│   ├── betting.py             # 投注推荐模块 / Betting recommendation
 │   ├── cache.py               # 磁盘缓存 / Disk cache manager
 │   ├── fetch.py               # HKJC 数据抓取 / Data fetcher
 │   ├── parse.py               # HTML 解析 / HTML parser
 │   ├── analyze.py             # 评分汇总 / Score aggregation
-│   └── output.py              # 报告输出 / Report formatter
+│   ├── output.py              # 报告输出 / Report formatter
+│   └── dump_race.py           # 调试工具 / Debug utility
 ├── references/                # URL 参考、权重配置 / URL refs, weight configs
+│   ├── analysis_weights.md    # 权重配置 / Weight configuration
+│   ├── expert_sources.md      # 专家数据源 / Expert sources
+│   └── hkjc_urls.md           # HKJC URL 整理 / URL reference
+├── assets/                    # 静态资源 / Static assets
 └── .archive/ .evolution/      # 自动生成输出 / Auto-generated output
 ```
 
@@ -94,6 +102,16 @@ hk-racing-analyzer/
 | 赔率数据 / Odds data | 5 分钟 / min | 临场实时变化 / Real-time |
 | 投注赔率 / Betting odds | 5 分钟 / min | 独赢/位置/连赢/三重彩/位置Q |
 | 贴士指数 / Tips index | 30 分钟 / min | 每场赛前更新 / Updated before each race |
+
+**v1.5.0 优化 / v1.5.0 Optimizations:**
+- **智能投注推荐 / Smart Betting Recommendations**: 场型判断 + 最优玩法推荐 (WIN/Q/TRIO/PLACE)、价值指数计算、冷门建议接口、回测命中验证
+- **动态 Softmax 温度 / Dynamic Softmax Temperature**: T 根据场内赔率离散度 3.0-6.0 自动调整
+- **赔率快照 / Odds Snapshot**: 新增 predicted_odds_snapshot 解决 opening_odds 全空问题
+
+**v1.4.12 优化 / v1.4.12 Optimizations:**
+- **tips_index 权重调整**: 6% → 4%
+- **首胜奖励调整**: +10 → +3
+- **动态 Softmax 温度 / Dynamic Softmax**: T=3.0-6.0 根据赔率离散度自动调整
 
 **v1.4.11 优化 / v1.4.11 Optimizations:**
 - **赔率权重提升 / Odds Weight Increase**: 赔率系合计从 30% → 40%，成为预测主导信号
@@ -169,7 +187,8 @@ hk-racing-analyzer/
 
 | 版本 / Version | 日期 / Date | 主要更新 / Main Changes |
 |---------------|-------------|------------------------|
-| [v1.4.11](RELEASE_NOTES.md#v1411--2026-04-05) | 2026-04-05 | 赔率权重优化：即时市场信号主导预测；赔率评分增强（20档+隐含胜率）；Softmax参数调整(T=4.0)；Skill双语文档结构优化 / Odds weight optimization: market signals dominate; enhanced odds scoring (20-tier + implied probability); Softmax tuning (T=4.0); bilingual docs restructure |
+| [v1.5.0](RELEASE_NOTES.md#v150--2026-04-07) | 2026-04-07 | 智能投注推荐模块：场型判断+最优玩法推荐(WIN/Q/TRIO/PLACE)、价值指数计算、冷门建议接口、回测命中验证；预测报告新增「最推荐投注方案」；回测新增投注推荐回测统计板块；Bug修复：赛马日场地检测误判（通过场地验证从返回HTML提取实际Racecourse比对修复） / Smart betting recommendation module: race-type judgment + optimal play recommendation (WIN/Q/TRIO/PLACE), value index calculation, longshot tip interface, backtest hit verification; prediction report adds "Recommended Betting Scheme"; backtest adds betting recommendation statistics; Bug fix: race day venue detection false positive (venue verification by extracting actual Racecourse from returned HTML) |
+| [v1.4.12](RELEASE_NOTES.md#v1412--2026-04-07) | 2026-04-07 | 基于2026-04-06沙田回测的深度进化：修复opening_odds全空问题(新增predicted_odds_snapshot)、tips_index权重6%→4%、hist_same_condition首胜奖励+10→+3、Softmax温度动态化(T根据场内赔率离散度3.0-6.0自动调整) / Deep evolution based on 2026-04-06 Sha Tin backtest: fix opening_odds all-NULL (add predicted_odds_snapshot), tips_index weight 6%→4%, first-win bonus +10→+3, dynamic Softmax temperature (T=3.0-6.0 based on odds dispersion) |
 | [v1.4.10](RELEASE_NOTES.md#v1410--2026-04-05) | 2026-04-05 | Bug修复：赔率抓取失败（改用Playwright DOM提取）/ Bug fix: odds scraping (switched to Playwright DOM extraction) |
 | [v1.4.9](RELEASE_NOTES.md#v149--2026-04-05) | 2026-04-05 | Bug修复：批量预测存档全空（缓存解析+字段名问题）/ Bug fix: empty batch predictions (cache parsing + field name issues) |
 | [v1.4.8](RELEASE_NOTES.md#v148--2026-04-03) | 2026-04-03 | 缓存系统优化：Zlib压缩+结构化存储，空间减少80-90%；投注赔率功能补全：独赢/位置/连赢/三重彩/位置Q完整解析 / Cache optimization: Zlib compression + structured storage, 80-90% space reduction; Betting odds complete: Win/Place/Quinella/Trio/QP |
