@@ -39,9 +39,35 @@
 | ST | 沙田 Sha Tin |
 | HV | 跑马地 Happy Valley |
 
+## HKJC GraphQL API（v1.6.0）
+
+### GraphQL Endpoint
+- 基础地址: `https://info.cld.hkjc.com/graphql/base/`
+- 由 npm 包 `hkjc-api` 封装，Skill 通过 `scripts/hkjc_api_client.js` 调用
+
+### Bridge 命令示例
+
+```bash
+# 检测指定日期 + 场地的 meeting
+node scripts/hkjc_api_client.js meetings --date 2026-04-08 --venue HV
+
+# 获取单场排位表
+node scripts/hkjc_api_client.js race --date 2026-04-08 --venue HV --race 3
+
+# 获取赔率池（WIN/PLA/QIN/QPL/TRI）
+node scripts/hkjc_api_client.js odds --date 2026-04-08 --venue HV --race 3 --types WIN,PLA,QIN,QPL,TRI
+```
+
+### API 覆盖说明
+
+- ✅ 可覆盖：赛马日检测、排位表核心字段、WIN/PLA/QIN/QPL/TRI 赔率池、赛果名次 `finalPosition`
+- ⚠️ 部分覆盖：赛果仅保留名次；完成时间、头马距离等仍需页面
+- ❌ 不可覆盖：马匹历史战绩、贴士指数、running positions
+
 ## 数据抓取注意事项
 
-1. 需要设置正确的 User-Agent 和 Accept-Language
-2. 页面可能使用 JavaScript 动态加载，部分数据需要等待
-3. 赔率数据实时变化，建议在临场前抓取
-4. 尊重网站的 robots.txt 和访问频率限制
+1. API 路径优先，但需控制频率：最小请求间隔 500ms，单次最多 2 次尝试
+2. 页面路径仍需设置正确的 User-Agent 和 Accept-Language
+3. 页面可能使用 JavaScript 动态加载，部分数据需要等待
+4. 赔率数据实时变化，建议在临场前抓取
+5. 尊重网站的 robots.txt 和访问频率限制

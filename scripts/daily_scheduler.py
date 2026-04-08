@@ -28,11 +28,20 @@ import argparse
 from datetime import datetime, timedelta
 
 if sys.platform == "win32":
+    # 仅在 stdout 是真实终端（有 buffer 属性且未被重定向）时才重包装
+    # 避免在 subprocess capture_output 或管道重定向时因 TextIOWrapper 双重包装崩溃
     try:
-        if hasattr(sys.stdout, "buffer"):
-            sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-        if hasattr(sys.stderr, "buffer"):
-            sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+        if hasattr(sys.stdout, "buffer") and sys.stdout.buffer is not None:
+            import io as _io
+            new_stdout = _io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True)
+            sys.stdout = new_stdout
+    except Exception:
+        pass
+    try:
+        if hasattr(sys.stderr, "buffer") and sys.stderr.buffer is not None:
+            import io as _io
+            new_stderr = _io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace", line_buffering=True)
+            sys.stderr = new_stderr
     except Exception:
         pass
 
@@ -331,15 +340,29 @@ def main():
     if mode == "predict":
         if args.date:
             target_date = args.date
+            race_info = detect_race_day(target_date)
+            if race_info:
+                run_batch_predictions(race_info)
+            else:
+                log(f"{target_date} 不是赛马日，无需预测。结束。")
         else:
-            tomorrow = now + timedelta(days=1)
-            target_date = tomorrow.strftime("%Y/%m/%d")
+            # 依次检测今天和明天
+            today_str     = now.strftime("%Y/%m/%d")
+            tomorrow_str  = (now + timedelta(days=1)).strftime("%Y/%m/%d")
 
-        race_info = detect_race_day(target_date)
-        if race_info:
-            run_batch_predictions(race_info)
-        else:
-            log(f"明天（{target_date}）不是赛马日，无需预测。结束。")
+            race_info = detect_race_day(today_str)
+            target_label = f"今天（{today_str}）"
+            target_date = today_str
+
+            if not race_info:
+                race_info = detect_race_day(tomorrow_str)
+                target_label = f"明天（{tomorrow_str}）"
+                target_date = tomorrow_str
+
+            if race_info:
+                run_batch_predictions(race_info)
+            else:
+                log(f"{target_label}不是赛马日，无需预测。结束。")
 
     # ── 回测模式 ──
     elif mode == "backtest":

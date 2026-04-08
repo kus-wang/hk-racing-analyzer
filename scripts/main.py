@@ -302,27 +302,43 @@ def main():
         f"{RACE_CARD_URL}"
         f"?racedate={quote(race_date)}&Racecourse={venue}&RaceNo={race_no}"
     )
-    html = fetch_url_with_playwright(url, force_refresh=force_refresh)
+    race_payload = fetch_url_with_playwright(
+        url,
+        force_refresh=force_refresh,
+        use_api_first=True,
+        race_date=race_date,
+        venue=venue,
+        race_no=race_no,
+    )
 
-    if not html:
+    if not race_payload:
         print("❌ 无法获取赛事数据，请检查日期/场地/场次是否正确。")
         return
 
-    # 解析参赛马匹（包含正选马 + 后备马）
-    all_horses = parse_race_entries(html, race_no=race_no)
+    data_source = "页面抓取"
+    if isinstance(race_payload, dict) and race_payload.get("source") == "api":
+        all_horses = race_payload.get("horses", [])
+        data_source = "HKJC API"
+    else:
+        html = race_payload
+        all_horses = parse_race_entries(html, race_no=race_no)
+
     if not all_horses:
         print("⚠️  未能解析出参赛马匹，页面结构可能已变更。")
         return
 
-    # 分离正选马和后备马
+    is_valid, warnings = validate_race_entries(all_horses, race_no=race_no)
+    if warnings:
+        for warning in warnings:
+            print(f"⚠️  {warning}")
+    if not is_valid and data_source == "页面抓取":
+        return
+
     regular_horses = [h for h in all_horses if not h.get("is_reserve", False)]
     reserve_horses = [h for h in all_horses if h.get("is_reserve", False)]
 
-    print(f"✅ 找到 {len(all_horses)} 匹参赛马匹（正选 {len(regular_horses)} 匹，后备 {len(reserve_horses)} 匹）")
+    print(f"✅ 找到 {len(all_horses)} 匹参赛马匹（正选 {len(regular_horses)} 匹，后备 {len(reserve_horses)} 匹） | 来源：{data_source}")
 
-    # 验证正选马数量
-    if len(regular_horses) < 10:
-        print(f"⚠️  正选马数量异常少（{len(regular_horses)} 匹），页面结构可能已变更")
 
     # 打印后备马信息
     if reserve_horses:

@@ -22,6 +22,17 @@ LOCAL_RESULTS_URL = HKJC_BASE + "/racing/information/Chinese/Racing/LocalResults
 # 格式：https://bet.hkjc.com/ch/racing/wp/{YYYY-MM-DD}/{VENUE}/{RACE_NO}
 BETTING_ODDS_URL_TEMPLATE = "https://bet.hkjc.com/ch/racing/wp/{date}/{venue}/{race_no}"
 
+# HKJC GraphQL API Node.js bridge 配置（v1.6.0）
+API_NODE_RUNTIME = os.environ.get("HKJC_API_NODE", "node")
+API_CLIENT_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hkjc_api_client.js")
+
+API_MAX_ATTEMPTS = 2                  # 最多 2 次尝试（含首次）
+API_RETRY_DELAY_SECONDS = 0.5         # 失败后等待 500ms 再重试
+API_REQUEST_INTERVAL_SECONDS = 0.5    # 任意两次 API 请求之间至少间隔 500ms
+API_TIMEOUT_SECONDS = 25
+API_DEFAULT_ODDS_TYPES = ("WIN", "PLA", "QIN", "QPL", "TRI")
+
+
 # ==============================================================================
 # 缓存配置
 # ==============================================================================

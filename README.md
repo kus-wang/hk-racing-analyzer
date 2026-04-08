@@ -9,9 +9,10 @@
 
 ## ✨ 为什么选择这个工具？/ Why This Tool?
 
-Like traditional handicapping, but **quantitative and automated** — combines 8+ data dimensions, self-evolves through backtesting, and scrapes real-time HKJC data.
+Like traditional handicapping, but **quantitative and automated** — combines 8+ data dimensions, self-evolves through backtesting, and now uses an **HKJC API-first + page-fallback** architecture for real-time race data.
 
-类似传统评马师的思路，但**量化且自动化** — 结合8+个数据维度，通过回测自我进化，实时抓取HKJC数据。
+类似传统评马师的思路，但**量化且自动化** — 结合8+个数据维度，通过回测自我进化，并升级为 **HKJC API 优先 + 页面回退** 的实时数据架构。
+
 
 > *"A tool that thinks like a professional tipster, but runs like a machine."*
 > *"一个像专业马评人一样思考，但像机器一样运行的工具。"*
@@ -23,7 +24,9 @@ Like traditional handicapping, but **quantitative and automated** — combines 8
 ```bash
 # 安装依赖 / Install dependencies
 pip install requests beautifulsoup4 lxml playwright
+npm install
 playwright install chromium
+
 
 # 分析今天沙田第3场 / Analyze today's Sha Tin Race 3
 python scripts/analyze_race.py --venue ST --race 3
@@ -38,7 +41,8 @@ python scripts/analyze_race.py --venue ST --race 3 --force-refresh
 python scripts/analyze_race.py --cache-stats
 ```
 
-**环境要求 / Requirements**: Python 3.10+, OpenClaw + SkillHub (可选，用于 AI Agent 自动化 / optional, for AI agent automation)
+**环境要求 / Requirements**: Python 3.10+, Node.js 18+, OpenClaw + SkillHub (可选，用于 AI Agent 自动化 / optional, for AI agent automation)
+
 
 ---
 
@@ -48,10 +52,11 @@ python scripts/analyze_race.py --cache-stats
 |----------------|---------------------|
 | **多维度分析 / Multi-dimensional** | 10个加权维度：赔率综合(22%)、赔率走势(18%)、同距离同场地历史(13%)、同场地历史(17%)、配速(8%)、骑师(4%)、练马师(3%)、档位(4%)、班次适配(7%)、贴士指数(4%) |
 | **后备马信息 / Reserve Horses** | 正选退赛时后备马自动递补，信息完整展示于分析报告中 |
-| **HKJC 实时数据 / Real-time Data** | 抓取官方 HKJC 页面 — 排位表、赔率、赛果、马匹档案、投注赔率(bet.hkjc.com) |
+| **HKJC 实时数据 / Real-time Data** | **HKJC API 优先 + 官方页面回退**：排位表、赔率、赛马日检测先走 GraphQL；历史页/贴士指数保留页面抓取 |
 | **投注赔率 / Betting Odds** | 独赢/位置/连赢/三重彩/位置Q 五种投注方式赔率抓取与分析；独赢赔率 20 档精细评分 + 隐含胜率融合 |
-| **智能缓存 / Smart Caching** | 分层 TTL，Zlib 压缩存储，支持 `--force-refresh` |
-| **模块化架构 / Modular Architecture** | daily_scheduler.py 拆分为 5 个模块（调度、缓存、赛马日检测、赛果、进化报告）|
+| **智能缓存 / Smart Caching** | 分层 TTL，API JSON 优先写入结构化缓存，HTML 继续 Zlib 压缩存储，支持 `--force-refresh` |
+| **模块化架构 / Modular Architecture** | 新增 `api_client.py` + `hkjc_api_client.js` API bridge；daily_scheduler.py 保持 5 模块拆分 |
+
 | **自我进化引擎 / Self-Evolution** | 对比预测与实际赛果，生成权重优化建议 |
 | **可配置权重 / Configurable Weights** | 场景自适应：normal / newcomer / class_up / class_down |
 
@@ -65,11 +70,14 @@ hk-racing-analyzer/
 ├── README.md                  # 本文件 / This file
 ├── RELEASE_NOTES.md           # 完整更新日志 / Full changelog
 ├── requirements.txt           # Python 依赖 / Python dependencies
+├── package.json               # Node 依赖（含 hkjc-api）/ Node dependencies
 ├── scripts/
 │   ├── main.py                # 模块化 CLI / Modular CLI
 │   ├── analyze_race.py        # 主入口 / Main entry
+│   ├── api_client.py          # Python API bridge / Python API bridge
+│   ├── hkjc_api_client.js     # Node GraphQL bridge / Node GraphQL bridge
 │   ├── daily_scheduler.py     # 调度编排器 / Scheduler (~390行)
-│   ├── scheduler_cache.py     # HTTP 缓存 / Cache (~100行)
+│   ├── scheduler_cache.py     # HTML 回退缓存 / HTML fallback cache (~100行)
 │   ├── race_day.py            # 赛马日检测 / Race day (~80行)
 │   ├── race_results.py        # 赛果抓取 / Results (~150行)
 │   ├── evolution_report.py    # 进化报告 / Evolution (~460行)
@@ -85,6 +93,7 @@ hk-racing-analyzer/
 │   ├── analyze.py             # 分析 / Analyzer
 │   ├── output.py              # 输出 / Output
 │   └── dump_race.py           # 调试 / Debug
+
 ├── references/                # 参考资料 / References
 └── .archive/ .evolution/      # 自动生成 / Auto-generated
 ```
@@ -93,16 +102,19 @@ hk-racing-analyzer/
 
 ## 💾 缓存策略 / Caching Strategy
 
-| 数据类型 / Data Type | TTL |
-|----------------------|-----|
-| 历史赛果 / Results | 7 天 |
-| 排位表 / Race card | 30 分钟 |
-| 马匹历史 / Horse history | 24 小时 |
-| 赔率 / Odds | 5 分钟 |
-| 贴士指数 / Tips index | 30 分钟 |
+| 数据类型 / Data Type | TTL | 说明 / Notes |
+|----------------------|-----|--------------|
+| 历史赛果 / Results | 7 天 | API 名次优先；详细字段回退页面 |
+| 排位表 / Race card | 30 分钟 | API JSON 优先缓存 |
+| 马匹历史 / Horse history | 24 小时 | 仍抓 Horse.aspx |
+| 赔率 / Odds | 5 分钟 | API 赔率池优先 |
+| 贴士指数 / Tips index | 30 分钟 | 页面抓取 |
 
-- Zlib 压缩存储，缓存空间减少 80-90%
+- API 响应优先写入 `parsed` 结构化缓存，减少重复解析
+- 页面 HTML 继续使用 Zlib 压缩存储，缓存空间减少 80-90%
+- API 请求节流：最小间隔 500ms，最多 2 次尝试
 - 支持 `--force-refresh` 强制刷新
+
 
 ---
 
@@ -168,7 +180,9 @@ hk-racing-analyzer/
 
 | 版本 / Version | 日期 / Date | 主要更新 / Main Changes |
 |---------------|-------------|------------------------|
+| [v1.6.0](RELEASE_NOTES.md#v160--2026-04-08) | 2026-04-08 | HKJC API 优先架构：排位表/赔率/赛马日检测/赛果名次先走 GraphQL，失败自动回退页面；新增 Python + Node 双桥接客户端 / HKJC API-first architecture with automatic page fallback |
 | [v1.5.2](RELEASE_NOTES.md#v152--2026-04-07) | 2026-04-07 | 重构：daily_scheduler.py 拆分为 5 个模块（调度编排器、缓存管理、赛马日检测、赛果抓取、进化报告），代码量削减 64% / Refactor: daily_scheduler.py split into 5 modules, code reduced 64% |
+
 | [v1.5.1](RELEASE_NOTES.md#v151--2026-04-07) | 2026-04-07 | 修复 opening_odds 全空问题；新增独赢/位置赔率比值冷门信号 / Fix opening_odds NULL issue; add win/place ratio dark horse signal |
 | [v1.5.0](RELEASE_NOTES.md#v150--2026-04-07) | 2026-04-07 | 智能投注推荐模块：场型判断+最优玩法推荐 / Smart betting recommendation module |
 | [v1.4.12](RELEASE_NOTES.md#v1412--2026-04-07) | 2026-04-07 | 深度进化：tips_index 权重调整、首胜奖励调整、Softmax 温度动态化 / Deep evolution: tips_index weight, first-win bonus, dynamic Softmax |

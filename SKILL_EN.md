@@ -1,6 +1,7 @@
 ---
 name: hk-racing-analyzer-en
-description: Hong Kong Horse Racing Analysis and Prediction Tool. Provides quantitative analysis based on historical performance, odds trends, sectional timing data, and official tips index, delivering top-3 probability distribution and betting recommendations. Trigger keywords: analyze Sha Tin/Happy Valley race X, horse racing prediction, horse analysis, HKJC racing, today's racing analysis, compare horse X and Y, today's results. Use cases: Users want to analyze a race, predict outcomes, compare horses, view race results.
+description: Hong Kong Horse Racing Analysis and Prediction Tool. Provides quantitative analysis based on historical performance, odds trends, sectional timing data, and official tips index, using an HKJC API-first architecture with page-scraping fallback to deliver top-3 probability distribution and betting recommendations. Trigger keywords: analyze Sha Tin/Happy Valley race X, horse racing prediction, horse analysis, HKJC racing, today's racing analysis, compare horse X and Y, today's results. Use cases: Users want to analyze a race, predict outcomes, compare horses, view race results.
+
 ---
 
 # Hong Kong Horse Racing Analyzer (HK Racing Analyzer)
@@ -9,10 +10,11 @@ Data-driven horse racing prediction tool combining historical data analysis with
 
 ## Core Features
 
-1. **Race Data Analysis** — Scrape HKJC race data and analyze all participating horses
+1. **Race Data Analysis** — Use HKJC GraphQL API as the primary source and official page scraping as fallback to analyze all participating horses
 2. **Prediction Analysis** — Provide top-3 probability distribution based on multi-dimensional scoring
 3. **Betting Recommendations** — Offer concise win / quinella / dark-horse suggestions
 4. **Daily Automation** — Auto-detect race days, batch-predict all races, post-race backtest, self-evolution suggestions
+
 
 ## Analysis Dimensions
 
@@ -20,12 +22,13 @@ Data-driven horse racing prediction tool combining historical data analysis with
 
 | Dimension | Data Source | Analysis Points |
 |-----------|-------------|-----------------|
-| **History — Same Condition** | HKJC Horse Profile | Last 5 races at same distance + same venue (time-decayed) |
-| **History — Same Venue** | HKJC Horse Profile | Last 5 races at same venue (any distance, time-decayed) |
-| **Class Fit** | Race Entry | Rating vs. class ceiling/floor |
-| **Odds Value** | HKJC Odds Page | 20-tier fine-grained score + place odds bonus + win/place ratio signal (v1.4.13) |
-| **Odds Drift** | HKJC Odds Page | Opening → final odds movement (shortening = strong signal) |
-| **Sectional / Pace Index** | HKJC Results | Running style derived from historical position calls |
+| **History — Same Condition** | HKJC Horse Profile page | Last 5 races at same distance + same venue (time-decayed); not replaceable by API yet |
+| **History — Same Venue** | HKJC Horse Profile page | Last 5 races at same venue (any distance, time-decayed) |
+| **Class Fit** | HKJC API race card | Rating vs. class ceiling/floor |
+| **Odds Value** | HKJC API + odds page fallback | 20-tier fine-grained score + place odds bonus + win/place ratio signal (v1.4.13) |
+| **Odds Drift** | HKJC API + odds page fallback | Opening → final odds movement (shortening = strong signal) |
+| **Sectional / Pace Index** | Results / history pages | API only exposes finalPosition; sectional pace and running positions still come from page parsing |
+
 
 ### Secondary Dimensions
 
@@ -60,16 +63,34 @@ Extract from user input: race date (default: today), venue (`ST`/`HV`), race num
 - "Compare horse 3 and 7" → date=today, intent=comparison, horses=[3, 7]
 - "Who won race 2 at Sha Tin today" → date=today, venue=ST, race=2, intent=results
 
-### Step 2: Fetch Race Data (with Caching)
+### Step 2: Fetch Race Data (with Caching, API-first)
 
 Built-in disk cache avoids redundant network requests. Location: `.cache/<url_hash>.json`
 
+#### Data Path (v1.6.0)
+
+1. Call `scripts/api_client.py` → `scripts/hkjc_api_client.js` → `hkjc-api` GraphQL endpoint first
+2. Limit every API operation to **2 attempts max** (including the first call) with a **500ms** retry delay
+3. Keep at least **500ms** between any two API requests to avoid excessive frequency
+4. Fall back to the original page path (Playwright / HTTP) when API retries are exhausted
+5. Cache API responses as structured JSON in `parsed` whenever possible to reduce HTML size and re-parsing cost
+
+#### API Coverage
+
+- ✅ Race card core fields: horse no, horse name, barrier, weight, rating, jockey, trainer, reserve marker
+- ✅ Odds pools: WIN / PLA / QIN / QPL / TRI
+- ✅ Race-day detection: venue + total race count
+- ⚠️ Race results: keep `finalPosition` only; finish time / margins still require page fallback
+- ❌ Still page-only: horse history, official tips index, running positions
+
 | Data Type | TTL | Notes |
 |-----------|-----|-------|
-| Historical race results (finished) | 7 days | Immutable after race ends |
-| Today's race card (pre-race) | 30 min | May change for scratchers/jockey switches |
-| Horse historical records | 24 hours | Updated once per race day |
-| Odds data | 5 min | Real-time near post time |
+| Historical race results (finished) | 7 days | Immutable after race ends; API rank first, page fallback for details |
+| Today's race card (pre-race) | 30 min | API JSON cached first; may still change for scratchers/jockey switches |
+| Horse historical records | 24 hours | Still fetched from Horse.aspx |
+| Odds data | 5 min | API odds pools first, near-real-time |
+| Tips index | 30 min | Page-only, pre-race updates |
+
 
 ### Step 3: Data Analysis
 
@@ -79,7 +100,8 @@ Run `scripts/analyze_race.py`:
 python scripts/analyze_race.py --date YYYY/MM/DD --venue ST/HV --race N
 ```
 
-The script automatically: fetches race card → fetches horse history (parallel) → gets odds → calculates multi-dimensional scores → Softmax probability → top-3 prediction.
+The script automatically: fetches race card / odds / race-day metadata through HKJC API first → fetches horse history in parallel → falls back to page scraping when API retries fail → calculates multi-dimensional scores → Softmax probability → top-3 prediction.
+
 
 Optional: use `web_search` for expert tips (see "External Reference" above).
 
@@ -136,25 +158,29 @@ python scripts/daily_scheduler.py --mode backtest
 | `main.py` | CLI parsing, main workflow orchestration, parallel history fetching |
 | `analyze.py` | Single horse multi-dimensional scoring |
 | `scoring.py` | All scoring functions (history/odds/pace/jockey/tips) |
-| `fetch.py` | HTTP requests, Playwright dynamic loading, horse history / tips / race results |
-| `parse.py` | Race card, horse history & race results HTML parsing |
-| `cache.py` | Disk cache read/write, TTL expiry, stats cleanup |
+| `api_client.py` | Python-side API bridge: subprocess wrapper for the Node client, 500ms throttling/retry policy, structured cache writes |
+| `hkjc_api_client.js` | Node-side HKJC GraphQL bridge: exposes `meetings`, `race`, and `odds` commands |
+| `fetch.py` | API-first data fetcher: race card / odds via GraphQL first, Playwright/HTTP fallback; horse history / tips still page-based |
+| `parse.py` | HTML parsing for the page-fallback path (race card, horse history, race results) |
+| `cache.py` | Disk cache read/write, TTL expiry, stats cleanup (API JSON stored in `parsed`) |
 | `output.py` | Markdown report formatting, auto betting-style classification |
-| `config.py` | URL constants, cache TTL, default weights |
+| `config.py` | URL constants, API bridge config, cache TTL, default weights |
 | `weights.py` | Scenario/venue/distance-adaptive dynamic weight calculation |
 | `probability.py` | Softmax normalized probability calculation |
 | `analyze_race.py` | **Entry compatibility layer** (directly calls main.py, CLI unchanged) |
 | `daily_scheduler.py` | **Scheduler orchestrator** (~390 lines): batch prediction workflow + main entry |
-| `scheduler_cache.py` | HTTP cache management + HTML fetching (for scheduler use) |
-| `race_day.py` | Race day detection: checks if a date has racing, returns venue & race count |
-| `race_results.py` | Actual race results scraping + HTML parsing: returns pos/horse no/name |
+| `scheduler_cache.py` | HTML-fallback cache management + page fetching (scheduler only) |
+| `race_day.py` | Race day detection: HKJC API first, page fallback |
+| `race_results.py` | Actual results fetch: API `finalPosition` first, HTML parsing fallback |
+
 | `evolution_report.py` | Backtest accuracy calculation + evolution suggestion generation + Markdown report |
 | `apply_evolution.py` | Evolution applicator (with backup/rollback) |
 | `dump_race.py` | Debug utility: dumps raw cached race data |
 
 ### references/
 
-- `hkjc_urls.md` — HKJC URL reference
+- `hkjc_urls_en.md` — HKJC URL / GraphQL API reference
+
 - `analysis_weights_en.md` — Dimension weight config (v1.4.11: 40% odds weight, 20-tier fine-grained scoring, Softmax T=4.0)
 - `expert_sources.md` — Expert prediction reference sources
 - `workflow.md` — **Detailed procedures handbook**: report template, betting logic, CLI usage, comparison/results query flows

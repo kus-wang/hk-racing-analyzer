@@ -4,7 +4,96 @@
 
 ---
 
+## v1.6.0 — 2026-04-08
+
+### 🚀 架构升级：HKJC API 优先 + 页面抓取回退
+
+**背景**：原版本核心依赖 HKJC 官方页面抓取。v1.6.0 引入 `hkjc-api` GraphQL 封装作为第一优先级数据源，用更稳定、结构化的接口覆盖排位表、赔率、赛马日检测与赛果名次；同时完整保留旧的页面抓取链路作为降级方案。
+
+#### 新增模块
+
+| 文件 | 作用 |
+|------|------|
+| `scripts/api_client.py` | Python 侧 API 客户端：统一 subprocess 调用、500ms 节流、最多 2 次尝试、结构化缓存 |
+| `scripts/hkjc_api_client.js` | Node.js 侧 GraphQL bridge：封装 `meetings` / `race` / `odds` 命令 |
+| `package.json` | 引入 `hkjc-api` npm 依赖 |
+
+#### API 优先覆盖范围
+
+- **排位表**：马号、马名、档位、负磅、评分、骑师、练马师、后备马标记
+- **赔率**：WIN / PLA / QIN / QPL / TRI 五种彩票池
+- **赛马日检测**：场地 + 总场次数
+- **赛果**：仅保留 `finalPosition` 名次
+
+#### 仍保留页面抓取的字段
+
+- 马匹历史战绩（`Horse.aspx`）
+- HKJC 官方贴士指数（`tips_index.asp`）
+- running positions / sectional pace
+- 赛果详细字段（完成时间、头马距离等）
+
+#### 代码改造
+
+- `fetch.py`
+  - 新增 `fetch_race_entries_api()`，将 API runner 数据转为现有主流程兼容结构
+  - `fetch_url_with_playwright()` 改为 API 优先，失败自动回退 Playwright / HTTP
+  - `fetch_race_odds()` 改为 API 赔率池优先，自动转换为既有 `win/place/quinella/trio/quinella_place` dict
+- `main.py`
+  - 主流程可直接消费 API 返回的结构化排位表数据
+  - 保留 `parse_race_entries()` 页面解析路径，作为降级方案
+- `race_day.py`
+  - `detect_race_day()` 改为 HKJC API 优先，再回退 RaceCard 页面检测
+- `race_results.py`
+  - `fetch_actual_results()` 改为 HKJC API `finalPosition` 优先，再回退 LocalResults 页面解析
+- `config.py`
+  - 新增 API bridge 运行时、节流、重试与默认赔率类型配置
+
+#### 缓存与稳定性策略
+
+- **频率控制**：任意两次 API 请求之间至少间隔 500ms
+- **重试**：单次 API 调用最多 2 次尝试（含首次），失败后等待 500ms 再试
+- **缓存格式**：API 响应优先以结构化 JSON 写入 `parsed`，减少 HTML 体积和重复解析
+- **降级策略**：API 在允许次数内仍失败时，自动切回旧版页面抓取链路
+
+#### 验证
+
+- `detect_race_day('2026/04/08')` 已通过 API 正确识别：跑马地 9 场
+- `fetch_race_entries_api('2026/04/08', 'HV', 1)` 返回有效排位表结构
+- `fetch_race_odds('2026/04/08', 'HV', 1)` 可通过 API 获取完整 WIN/PLA/QIN 数据
+- `python scripts/main.py --date 2026/04/08 --venue HV --race 1 --output json` 已成功跑通主流程
+
+#### 验证（续）
+
+- Windows PowerShell 模拟 `HKJC_API_NODE=__missing_node__` 场景：emoji 日志正常输出，`UnicodeEncodeError` 已消除，API 返回 None 后正常触发降级
+- 赛果 `_parse_result_api()` 实测：finalPosition=0/空值正确过滤；7匹总马中仅1匹有效时返回 None 触发回退
+
+#### 🐛 Bug 修复：Windows 控制台编码异常打断回退链路
+
+**问题**：在 Windows PowerShell 下，`api_client.py` 的输出日志包含 emoji 字符（💾、⚠️），当控制台编码不兼容时（如 GBK）会触发 `UnicodeEncodeError: 'gbk' codec can't encode character`。异常发生在 API 失败时，而本来应该降级到页面抓取的回退流程，被日志输出打断了。
+
+**修复**：`api_client.py` 新增安全日志包装：
+- `_configure_console_output()`：为 stdout/stderr 设置 `errors="replace"` 降级模式
+- `_log()`：包装 `print()`，编码失败时自动降级替换字符
+- 所有内部打印改为 `_log()` 调用，避免输出本身成为新的异常源
+
+**影响**：确保 API 失败场景稳定触发降级，不会因控制台编码问题中断脚本执行。
+
+#### 🐛 Bug 修复：赛果 API finalPosition 判定不可靠
+
+**问题**：历史已完赛场次（如 2026-04-06 ST、2026-04-01 ST）通过 GraphQL `race` 接口读取时，`runners[].finalPosition` 可能为空、`0` 或其它无效值。若仅凭此字段是否非空判断 API 是否有效，会误以为赛果 API 可靠，但实际上需要回退到页面解析才能拿到真正名次。
+
+**修复**：`_parse_result_api()` 增加严格校验与可靠性检查：
+1. 仅接受 `1-14` 范围内的整数 finalPosition
+2. 马号也必须在 `1-14` 范围内
+3. 马名不能为空
+4. **可靠性检查**：有效名次马匹数必须 ≥ 总参赛马数的一半，否则返回 None 触发页面回退
+
+**影响**：赛果抓取流程现在能稳定区分“API 有效名次不足”与“页面回退不可用”的边界，确保历史场次名次解析稳定。
+
+---
+
 ## v1.5.2 — 2026-04-07
+
 
 ### ♻️ 重构：daily_scheduler.py 拆分为 5 个模块
 

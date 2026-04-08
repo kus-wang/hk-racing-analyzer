@@ -39,9 +39,35 @@
 | ST | Sha Tin |
 | HV | Happy Valley |
 
+## HKJC GraphQL API (v1.6.0)
+
+### GraphQL Endpoint
+- Base URL: `https://info.cld.hkjc.com/graphql/base/`
+- Wrapped by the `hkjc-api` npm package and called through `scripts/hkjc_api_client.js`
+
+### Bridge Command Examples
+
+```bash
+# Detect meetings for a date + venue
+node scripts/hkjc_api_client.js meetings --date 2026-04-08 --venue HV
+
+# Fetch one race card
+node scripts/hkjc_api_client.js race --date 2026-04-08 --venue HV --race 3
+
+# Fetch odds pools (WIN/PLA/QIN/QPL/TRI)
+node scripts/hkjc_api_client.js odds --date 2026-04-08 --venue HV --race 3 --types WIN,PLA,QIN,QPL,TRI
+```
+
+### API Coverage
+
+- ✅ Covered: race-day detection, core race-card fields, WIN/PLA/QIN/QPL/TRI odds pools, race result rank via `finalPosition`
+- ⚠️ Partial: results keep rank only; finish time / margins still require page fallback
+- ❌ Not covered: horse history, official tips index, running positions
+
 ## Data Scraping Notes
 
-1. Need to set correct User-Agent and Accept-Language headers
-2. Pages may use JavaScript dynamic loading, some data requires waiting
-3. Odds data changes in real-time, recommend scraping before race time
-4. Respect website's robots.txt and access frequency limits
+1. Prefer the API path first, but throttle requests: minimum 500ms interval, maximum 2 attempts per call
+2. For page fallback, set correct User-Agent and Accept-Language headers
+3. Pages may use JavaScript dynamic loading, some data requires waiting
+4. Odds data changes in real-time, so fetch close to race time when needed
+5. Respect the website's robots.txt and access frequency limits

@@ -13,8 +13,17 @@ import time
 import atexit
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
-from config import RACE_CARD_URL, TIPS_INDEX_URL, LOCAL_RESULTS_URL, BETTING_ODDS_URL_TEMPLATE, CACHE_TTL
+from config import (
+    RACE_CARD_URL,
+    TIPS_INDEX_URL,
+    LOCAL_RESULTS_URL,
+    BETTING_ODDS_URL_TEMPLATE,
+    CACHE_TTL,
+    API_DEFAULT_ODDS_TYPES,
+)
 from cache import _cache_get, _cache_set, _classify_url, _cache_path
+from api_client import get_race_data, get_race_odds_data
+
 
 
 # ==============================================================================
@@ -142,23 +151,197 @@ def fetch_url(url, timeout=15, force_refresh=False, max_retries=3):
                 return None
 
 
-def fetch_url_with_playwright(url, timeout=30, force_refresh=False):
-    """
-    使用 Playwright 抓取需要 JS 渲染的页面内容。
+def _safe_int(value, default=0):
+    """安全地将字符串/数字转换为 int。"""
+    if value is None:
+        return default
+    digits = re.sub(r"[^\d-]", "", str(value)).strip()
+    if not digits:
+        return default
+    try:
+        return int(digits)
+    except ValueError:
+        return default
 
-    适用于：
-    - 排位表页面 (racecard)：马匹数据通过 JS 动态加载
-    - 其他使用 JavaScript 渲染内容的页面
+
+
+def _safe_float(value, default=0.0):
+    """安全地将字符串/数字转换为 float。"""
+    if value is None:
+        return default
+    cleaned = re.sub(r"[^\d.-]", "", str(value)).strip()
+    if not cleaned:
+        return default
+    try:
+        return float(cleaned)
+    except ValueError:
+        return default
+
+
+
+def _build_horse_entry(
+    horse_id: str,
+    horse_name: str,
+    horse_no: int,
+    barrier: int,
+    jockey_name: str,
+    jockey_code: str,
+    trainer_name: str,
+    trainer_code: str,
+    weight: float,
+    current_rating: int,
+    is_reserve: bool,
+):
+    """构造与 parse_race_entries() 一致的马匹结构。"""
+    return {
+        "id": horse_id,
+        "name": horse_name,
+        "no": horse_no,
+        "barrier": barrier,
+        "jockey": jockey_name,
+        "jockey_code": jockey_code,
+        "trainer": trainer_name,
+        "trainer_code": trainer_code,
+        "weight": weight,
+        "current_rating": current_rating,
+        "is_reserve": is_reserve,
+        "final_odds": None,
+        "opening_odds": None,
+        "tips_index": None,
+        "history": [],
+        "history_same_condition_score": 40,
+        "history_same_venue_score": 40,
+        "class_fit_score": 50,
+        "odds_value_score": 50,
+        "odds_drift_score": 50,
+        "sectional_score": 50,
+        "jockey_score": 50,
+        "trainer_score": 50,
+        "barrier_score": 50,
+        "tips_index_score": 50,
+        "expert_score": 50,
+        "total_score": 0,
+        "probability": 0,
+        "confidence": "⭐ 低",
+        "longshot_alert": False,
+    }
+
+
+
+def fetch_race_entries_api(race_date: str, venue: str, race_no: int, force_refresh: bool = False) -> dict | None:
+    """
+    使用 HKJC GraphQL API 获取单场排位表，并转换为主流程使用的标准结构。
 
     返回：
-        HTML 字符串，或 None（失败时）
-
-    注意：浏览器实例全局复用，无需手动关闭页面。
+        {
+            "source": "api",
+            "meeting": {...},
+            "race": {...},
+            "horses": [...]
+        }
+        或 None（失败时）
     """
-    # 尝试读缓存
+    api_payload = get_race_data(
+        race_date,
+        venue,
+        race_no,
+        force_refresh=force_refresh,
+        cache_ttl=CACHE_TTL["race_card"],
+    )
+    if not api_payload:
+        return None
+
+    race = api_payload.get("race") or {}
+    meeting = api_payload.get("meeting") or {}
+    runners = race.get("runners") or []
+    if not runners:
+        return None
+
+    horses = []
+    seen_ids = set()
+    for runner in runners:
+        horse_info = runner.get("horse") or {}
+        jockey_info = runner.get("jockey") or {}
+        trainer_info = runner.get("trainer") or {}
+
+        horse_id = str(horse_info.get("id") or runner.get("id") or "").strip()
+        horse_name = (
+            runner.get("name_ch")
+            or horse_info.get("name_ch")
+            or runner.get("name_en")
+            or horse_info.get("name_en")
+            or ""
+        ).strip()
+        horse_no = _safe_int(runner.get("no"), 0)
+
+        if not horse_id or not horse_name or not horse_no:
+            continue
+        if horse_id in seen_ids:
+            continue
+        seen_ids.add(horse_id)
+
+        standby_no = str(runner.get("standbyNo") or "").strip()
+        status_text = str(runner.get("status") or "").strip().upper()
+        is_reserve = bool(standby_no) or status_text in {"R", "RESERVE", "STANDBY"}
+
+        horses.append(_build_horse_entry(
+            horse_id=horse_id,
+            horse_name=horse_name,
+            horse_no=horse_no,
+            barrier=_safe_int(runner.get("barrierDrawNumber"), 0),
+            jockey_name=(jockey_info.get("name_ch") or jockey_info.get("name_en") or "").strip(),
+            jockey_code=str(jockey_info.get("code") or "").strip(),
+            trainer_name=(trainer_info.get("name_ch") or trainer_info.get("name_en") or "").strip(),
+            trainer_code=str(trainer_info.get("code") or "").strip(),
+            weight=_safe_float(runner.get("handicapWeight"), 0.0),
+            current_rating=_safe_int(runner.get("currentRating"), 40),
+            is_reserve=is_reserve,
+        ))
+
+    if not horses:
+        return None
+
+    return {
+        "source": "api",
+        "meeting": meeting,
+        "race": race,
+        "horses": horses,
+    }
+
+
+
+def fetch_url_with_playwright(
+    url,
+    timeout=30,
+    force_refresh=False,
+    use_api_first=True,
+    race_date=None,
+    venue=None,
+    race_no=None,
+):
+    """
+    获取排位表数据：优先使用 HKJC API，失败后降级到 Playwright 页面抓取。
+
+    返回：
+        - API 成功：dict（含 horses/race/meeting/source）
+        - 页面抓取成功：HTML 字符串
+        - 失败：None
+    """
+    if use_api_first and race_date and venue and race_no is not None:
+        api_payload = fetch_race_entries_api(
+            race_date=race_date,
+            venue=venue,
+            race_no=race_no,
+            force_refresh=force_refresh,
+        )
+        if api_payload:
+            print(f"  🌐 HKJC API 获取 [racecard]: {race_date} {venue} 第{race_no}场")
+            return api_payload
+        print("  ⚠️  HKJC API 未返回有效排位表，回退到 Playwright")
+
     if not force_refresh:
         cached = _cache_get(url)
-        if cached is not None and 'horseid=' in cached.lower():
+        if isinstance(cached, str) and 'horseid=' in cached.lower():
             print(f"  💾 缓存命中 [playwright]: {url[:80]}...")
             return cached
 
@@ -169,23 +352,21 @@ def fetch_url_with_playwright(url, timeout=30, force_refresh=False):
             return fetch_url(url, timeout=timeout, force_refresh=force_refresh)
 
         page.goto(url, timeout=timeout * 1000)
-        page.wait_for_timeout(5000)  # 等待 JS 执行
+        page.wait_for_timeout(5000)
         html = page.content()
-        # 注意：不关闭页面，由管理器统一复用
 
         print(f"  🌐 Playwright 获取 [racecard]: {url[:80]}...")
 
-        # 验证是否获取到马匹数据
         if 'horseid=' not in html.lower():
-            print(f"  ⚠️  Playwright 获取的页面无马匹数据，可能 JS 加载失败")
+            print("  ⚠️  Playwright 获取的页面无马匹数据，可能 JS 加载失败")
 
-        # 写入缓存
         _cache_set(url, html)
         return html
 
     except Exception as e:
         print(f"  ⚠️  Playwright 获取失败: {e}，回退到普通 fetch")
         return fetch_url(url, timeout=timeout, force_refresh=True)
+
 
 
 # ==============================================================================
@@ -466,41 +647,71 @@ def _fetch_tips_index_static(url: str) -> dict:
 # 投注赔率
 # ==============================================================================
 
+def _normalize_single_odds_key(comb_string: str) -> str | None:
+    """将单马号组合转换为 #N 形式。"""
+    no = _safe_int(comb_string, 0)
+    return f"#{no}" if no > 0 else None
+
+
+
+def _normalize_combo_odds_key(comb_string: str) -> str | None:
+    """将组合马号转换为 N,N 或 N,N,N 形式。"""
+    nums = [_safe_int(part, 0) for part in str(comb_string).split(",")]
+    nums = [str(n) for n in nums if n > 0]
+    return ",".join(nums) if nums else None
+
+
+
+def _convert_api_odds_result(pm_pools: list, race_no: int, venue: str, date: str) -> dict:
+    """将 HKJC API 的赔率池结构转换为现有赔率 dict。"""
+    result = _empty_odds_result(race_no=race_no, venue=venue, date=date)
+    result["source"] = "hkjc-api"
+
+    pool_map = {
+        "WIN": ("win", _normalize_single_odds_key),
+        "PLA": ("place", _normalize_single_odds_key),
+        "QIN": ("quinella", _normalize_combo_odds_key),
+        "QPL": ("quinella_place", _normalize_combo_odds_key),
+        "TRI": ("trio", _normalize_combo_odds_key),
+    }
+
+    for pool in pm_pools or []:
+        odds_type = str(pool.get("oddsType") or "").upper().strip()
+        target = pool_map.get(odds_type)
+        if not target:
+            continue
+
+        field_name, key_builder = target
+        for node in pool.get("oddsNodes") or []:
+            odds_value = _safe_float(node.get("oddsValue"), 0.0)
+            if odds_value <= 0:
+                continue
+            combo_key = key_builder(node.get("combString") or "")
+            if combo_key:
+                result[field_name][combo_key] = odds_value
+
+    has_any_odds = any([
+        result["win"],
+        result["place"],
+        result["quinella"],
+        result["quinella_place"],
+        result["trio"],
+    ])
+    result["status"] = "ok" if has_any_odds else "unavailable"
+    return result
+
+
+
 def fetch_race_odds(
     race_date: str,
     venue: str,
     race_no: int,
-    force_refresh: bool = False
+    force_refresh: bool = False,
+    use_api_first: bool = True,
 ) -> dict:
     """
-    抓取 HKJC 投注赔率页面并解析各投注方式的赔率数据。
-
-    URL 格式：https://bet.hkjc.com/ch/racing/wp/{YYYY-MM-DD}/{VENUE}/{RACE_NO}
-    例如：  https://bet.hkjc.com/ch/racing/wp/2026-04-06/ST/1
-
-    参数：
-        race_date    : 日期字符串，格式 YYYY/MM/DD（如 "2026/04/06"）
-        venue        : 场地代码，ST（沙田）或 HV（跑马地）
-        race_no      : 场次号
-        force_refresh: 忽略缓存强制重新抓取
-
-    返回结构：
-    {
-        "race_no": 1,
-        "venue": "ST",
-        "date": "2026-04-06",
-        "win":       {"#1": 8.5, "#2": 12.0, ...},           # 独赢赔率
-        "place":     {"#1": 2.8, "#2": 3.5, ...},           # 位置赔率
-        "quinella":  {"1,2": 45.0, "1,3": 52.0, ...},       # 连赢赔率
-        "trio":      {"1,2,3": 180.0, ...},                 # 三重彩赔率
-        "quinella_place": {"1,2": 18.0, ...},               # 位置Q赔率
-        "last_updated": "14:30",
-        "source":    "bet.hkjc.com",
-    }
-
-    注：若赛事未开盘（赛前），所有赔率字段为空字典 {}
+    抓取 HKJC 投注赔率数据：优先使用 API，失败后回退到 Playwright 页面。
     """
-    # 日期格式转换 YYYY/MM/DD → YYYY-MM-DD
     from datetime import datetime as _dt
     try:
         dt = _dt.strptime(race_date, "%Y/%m/%d")
@@ -513,29 +724,46 @@ def fetch_race_odds(
         venue=venue,
         race_no=race_no
     )
-
-    # 赔率页面使用独立缓存 key，避免与排位表混淆
     odds_cache_url = f"odds_{date_iso}_{venue}_{race_no}"
 
-    # v1.4.9: 使用统一缓存接口，支持自定义 key 和结构化数据
     if not force_refresh:
         cached = _cache_get(url, cache_key=odds_cache_url)
-        if cached is not None:
-            # _cache_get 已处理 TTL，在 parsed 模式下直接返回结构化数据
-            if isinstance(cached, dict) and cached.get("status"):
-                print(f"  💾 缓存命中 [odds]: {url[:70]}...")
-                return cached
+        if isinstance(cached, dict) and cached.get("status"):
+            print(f"  💾 缓存命中 [odds]: {url[:70]}...")
+            return cached
 
-    # ── v1.4.10: 使用 Playwright 从动态渲染的 DOM 直接提取赔率 ──────────
-    # 赔率页面是 JS 动态加载，普通 HTTP 请求无法获取数据，必须用 Playwright
+    if use_api_first:
+        api_payload = get_race_odds_data(
+            race_date,
+            venue,
+            race_no,
+            odds_types=list(API_DEFAULT_ODDS_TYPES),
+            force_refresh=force_refresh,
+            cache_ttl=CACHE_TTL["odds"],
+        )
+        if api_payload is not None:
+            api_result = _convert_api_odds_result(
+                api_payload.get("pmPools") or [],
+                race_no=race_no,
+                venue=venue,
+                date=date_iso,
+            )
+            _save_odds_cache(odds_cache_url, api_result)
+            if api_result.get("status") == "ok":
+                print(f"  🌐 HKJC API 获取 [odds]: {date_iso} {venue} 第{race_no}场")
+            else:
+                print(f"  ℹ️  HKJC API 已响应，但当前无可用赔率（可能未开盘）")
+            return api_result
+
+        print("  ⚠️  HKJC API 赔率获取失败，回退到 Playwright")
+
     result = _fetch_odds_with_playwright(url, race_no=race_no, venue=venue, date=date_iso)
-
-    # 写入缓存
     _save_odds_cache(odds_cache_url, result)
     return result
 
 
 def _fetch_odds_with_playwright(url: str, race_no: int, venue: str, date: str) -> dict:
+
     """
     使用 Playwright 提取 HKJC 赔率页面的投注数据。
 

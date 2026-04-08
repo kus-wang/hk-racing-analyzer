@@ -1,8 +1,23 @@
-﻿.cache/
+﻿# Runtime/cache artifacts
+.cache/
 .archive/
 .evolution/
 .backups/
 .codebuddy/
 .workbuddy/
-scripts/__pycache__/
+
+# Local dependencies / environments
+node_modules/
+.venv/
+venv/
+env/
+.env
+.env.*
+
+# Python cache
+__pycache__/
 *.pyc
+
+# Logs / diagnostics
+*.log
+scripts/_diag_html.html

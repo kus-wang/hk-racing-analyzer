@@ -3,19 +3,92 @@
 """
 赛马分析工具 — 实际赛果抓取模块
 ==============================
-职责：抓取 HKJC 赛果页面，解析名次/马号/马名。
+职责：抓取 HKJC 赛果数据，解析名次/马号/马名。
 由 daily_scheduler.py 调用。
 
 缓存 TTL：7 天（赛果一旦确定不会变化）
 """
 
 import re
+
+from api_client import get_race_data
+from config import CACHE_TTL
 from scheduler_cache import fetch_html
 
 # HKJC URL
-HKJC_BASE     = "https://racing.hkjc.com"
-RESULT_URL    = HKJC_BASE + "/racing/information/Chinese/Racing/LocalResults.aspx"
-CACHE_TTL     = 7 * 24 * 3600  # 赛果 7 天
+HKJC_BASE = "https://racing.hkjc.com"
+RESULT_URL = HKJC_BASE + "/racing/information/Chinese/Racing/LocalResults.aspx"
+CACHE_SECONDS = CACHE_TTL["race_result"]
+
+
+
+def _parse_result_api(race_payload: dict) -> list | None:
+    """
+    从 HKJC API race payload 中提取名次，仅保留 finalPosition。
+    
+    实测发现：历史已完赛场次（如 2026-04-06 ST、2026-04-01 ST）的 finalPosition
+    可能为空、0 或不可靠。因此，本函数仅返回有效的确定名次（1-14），
+    若有效名次不足总参赛马数的一半，则视为不可靠，返回 None 触发页面回退。
+    """
+    race = (race_payload or {}).get("race") or {}
+    runners = race.get("runners") or []
+    placements = []
+
+    for runner in runners:
+        # finalPosition 可能为 null、""、"0"、"999" 等无效值
+        pos_text = str(runner.get("finalPosition") or "").strip()
+        if not pos_text.isdigit():
+            continue
+        pos_val = int(pos_text)
+        if not (1 <= pos_val <= 14):  # 香港赛事最多 14 匹马
+            continue
+
+        no_text = str(runner.get("no") or "").strip()
+        if not no_text.isdigit():
+            continue
+        horse_no = int(no_text)
+        if not (1 <= horse_no <= 14):
+            continue
+
+        horse_info = runner.get("horse") or {}
+        name = (
+            runner.get("name_ch")
+            or horse_info.get("name_ch")
+            or runner.get("name_en")
+            or horse_info.get("name_en")
+            or ""
+        ).strip()
+        if not name:
+            continue
+
+        placements.append({
+            "pos": pos_val,
+            "no": str(horse_no),
+            "name": name,
+        })
+
+    if not placements:
+        return None
+
+    # 防重复马号
+    seen = set()
+    unique = []
+    for item in sorted(placements, key=lambda x: (x["pos"], int(x["no"]))):
+        if item["no"] in seen:
+            continue
+        seen.add(item["no"])
+        unique.append(item)
+
+    # 数据可靠性检查：获取到有效名次的马匹数必须达到总马数的一半以上
+    # 否则视为 API 数据不全，回退到页面解析
+    n_total = len(runners)
+    n_valid = len(unique)
+    if n_total > 0 and n_valid * 2 < n_total:
+        return None
+
+    return unique or None
+
+
 
 
 def fetch_actual_results(race_info: dict) -> dict:
@@ -27,18 +100,33 @@ def fetch_actual_results(race_info: dict) -> dict:
     """
     from daily_scheduler import log
 
-    date_str     = race_info["date"]
-    venue        = race_info["venue"]
-    venue_name   = race_info.get("venue_name", venue)
-    total_races  = race_info["total_races"]
+    date_str = race_info["date"]
+    venue = race_info["venue"]
+    venue_name = race_info.get("venue_name", venue)
+    total_races = race_info["total_races"]
 
     log(f"\n📊 抓取实际赛果：{date_str} {venue_name}")
 
     results = {}
     for race_no in range(1, total_races + 1):
-        url  = f"{RESULT_URL}?RaceDate={date_str}&Venue={venue}&RaceNo={race_no}"
+        api_payload = get_race_data(
+            date_str,
+            venue,
+            race_no,
+            force_refresh=False,
+            cache_ttl=CACHE_SECONDS,
+        )
+        parsed = _parse_result_api(api_payload) if api_payload else None
+
+        if parsed:
+            results[str(race_no)] = parsed
+            top3 = [h["no"] for h in parsed[:3]]
+            log(f"  场次 {race_no}：实际前3 = {top3}（来源：HKJC API）")
+            continue
+
+        url = f"{RESULT_URL}?RaceDate={date_str}&Venue={venue}&RaceNo={race_no}"
         ckey = f"result_{date_str}_{venue}_{race_no}"
-        html = fetch_html(url, ckey, CACHE_TTL)
+        html = fetch_html(url, ckey, CACHE_SECONDS)
 
         if not html:
             log(f"  场次 {race_no}：⚠ 抓取失败")
@@ -48,11 +136,12 @@ def fetch_actual_results(race_info: dict) -> dict:
         if parsed:
             results[str(race_no)] = parsed
             top3 = [h["no"] for h in parsed[:3]]
-            log(f"  场次 {race_no}：实际前3 = {top3}")
+            log(f"  场次 {race_no}：实际前3 = {top3}（来源：页面）")
         else:
             log(f"  场次 {race_no}：⚠ 解析失败")
 
     return results
+
 
 
 def _parse_result_html(html: str) -> list | None:
@@ -71,28 +160,24 @@ def _parse_result_html(html: str) -> list | None:
     """
     placements = []
 
-    # ── 方案 A：逐行解析 <tr> 块（主力方案） ──
     tr_blocks = re.findall(r'<tr[^>]*>(.*?)</tr>', html, re.DOTALL)
     for tr in tr_blocks:
         tds_raw = re.findall(r'<td[^>]*>(.*?)</td>', tr, re.DOTALL)
         if len(tds_raw) < 3:
             continue
-        # 去除 HTML 标签，保留文本
+
         tds = [re.sub(r'<[^>]+>', ' ', td).strip() for td in tds_raw]
         tds = [re.sub(r'\s+', ' ', t).strip() for t in tds]
 
-        # 第0列：名次（取末尾数字）
         pos_text = tds[0]
         pos_m = re.search(r'(\d+)\s*$', pos_text)
         if not pos_m:
             continue
 
-        # 第1列：马号（纯数字1-2位）
         no_text = tds[1]
         if not re.match(r'^\d{1,2}$', no_text):
             continue
 
-        # 第2列：马名（含代码如"爆熱 (G368)"）
         name_text = tds[2]
         name_m = re.match(r'^(.+?)\s*(?:&nbsp;)?\s*\([A-Z]\d+\)', name_text)
         name = name_m.group(1).strip() if name_m else name_text.strip()
@@ -101,7 +186,7 @@ def _parse_result_html(html: str) -> list | None:
 
         try:
             pos = int(pos_m.group(1))
-            no  = str(int(no_text))
+            no = str(int(no_text))
             if 1 <= pos <= 20 and name:
                 placements.append({"pos": pos, "no": no, "name": name})
         except ValueError:
@@ -117,7 +202,6 @@ def _parse_result_html(html: str) -> list | None:
         if unique:
             return unique
 
-    # ── 方案 B：备用正则（旧格式兼容） ──
     fallback_patterns = [
         r"<tr[^>]*>\s*<td[^>]*>(\d+)</td>\s*<td[^>]*>(\d+)</td>\s*<td[^>]*>([^<]+)</td>",
         r"<td[^>]*f_tac[^>]*>(\d+)</td>[^<]*<td[^>]*>(\d+)</td>[^<]*<td[^>]*>([^<]{2,20})</td>",
@@ -130,7 +214,7 @@ def _parse_result_html(html: str) -> list | None:
                 pos_str, no_str, name = m[0].strip(), m[1].strip(), m[2].strip()
                 try:
                     pos = int(pos_str)
-                    no  = str(int(no_str))
+                    no = str(int(no_str))
                     if 1 <= pos <= 20 and name:
                         placements.append({"pos": pos, "no": no, "name": name})
                 except ValueError:
