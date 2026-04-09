@@ -39,6 +39,12 @@ def _parse_total_races_from_api(meeting: dict) -> int:
 
 
 def _detect_race_day_by_api(date_str: str):
+    """
+    优先用 HKJC API 检测赛马日。
+
+    重要：HKJC GraphQL raceMeetings API 有时会忽略 date 参数，返回"下一个可用赛事"。
+    因此在返回前，会用第一场的 postTime 与目标日期进行严格校验。
+    """
     """优先用 HKJC API 检测赛马日。"""
     payload = get_meetings(date_str, force_refresh=False, cache_ttl=CACHE_SECONDS)
     if not payload:
@@ -55,6 +61,18 @@ def _detect_race_day_by_api(date_str: str):
         )
         if venue_code not in VENUE_NAME_MAP:
             continue
+
+        # ── 关键校验：API 有时会忽略 date 参数，用 postTime 校验 ──
+        races = meeting.get("races") or []
+        if races:
+            first_post_time = races[0].get("postTime", "")
+            # postTime 格式：2026-04-12T12:30:00+08:00，截取日期部分
+            post_date = first_post_time[:10]  # "YYYY-MM-DD"
+            # 将目标日期 "YYYY/MM/DD" 转为 "YYYY-MM-DD" 进行比较
+            target_iso = date_str.replace("/", "-")
+            if post_date != target_iso:
+                # API 返回的赛事不在目标日期，跳过
+                continue
 
         total_races = _parse_total_races_from_api(meeting)
         if total_races <= 0:

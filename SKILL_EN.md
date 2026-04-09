@@ -39,6 +39,8 @@ Data-driven horse racing prediction tool combining historical data analysis with
 | Trainer | Horse history (dynamic) | Win/top-3 rate of this trainer with this horse |
 | Barrier | Historical stats | Barrier win rate at same distance (HV: inside barrier advantage) |
 | Track Preference | Horse Profile | Turf/Dirt, Good/Fast performance (in same-condition history) |
+| **Weight Bonus** | Race card weight | Lightweight horses (< 120 lbs) receive bonus, extra bonus on HV short races |
+| **TJ Combo Bonus** | Race card jockey/trainer | Top jockey+trainer combos receive whitelist bonus |
 
 > Jockey/Trainer weights are dynamically computed by `weights.py` based on venue/distance/class. See `references/analysis_weights_en.md` for the full scoring rubric.
 

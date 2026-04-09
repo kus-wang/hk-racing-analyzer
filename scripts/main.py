@@ -349,9 +349,32 @@ def main():
     regular_horses = infer_class_range(regular_horses)
 
     # ── 抓取 HKJC 官方贴士指数 ─────────────────────────────────
+    # ⚠️ 注意：tips_index 页面（tips_index.asp）无日期参数，总是显示"下一个赛马日"的贴士。
+    # 若该页面的日期与目标场次日期不符，贴士数据无效——丢弃以避免错误信号。
     print(f"\n📊 正在抓取 HKJC 官方贴士指数...")
     tips_data = fetch_tips_index(force_refresh=force_refresh)
+    tips_valid = False  # 默认无效，等日期校验通过后改为 True
     if tips_data.get("tips"):
+        # 日期校验：检查 tips_index 页面是否显示目标日期的赛事
+        tips_date = tips_data.get("race_info", {}).get("date", "")
+        if tips_date:
+            # tips_index 日期格式为 "DD/MM/YYYY"，转换为 "YYYY/MM/DD" 以便比较
+            try:
+                from datetime import datetime
+                tips_date_normalized = datetime.strptime(tips_date, "%d/%m/%Y").strftime("%Y/%m/%d")
+            except Exception:
+                tips_date_normalized = tips_date
+            if tips_date_normalized != race_date:
+                print(f"⚠️  贴士指数日期不匹配（页面:{tips_date_normalized} ≠ 目标:{race_date}），忽略贴士数据")
+                tips_data = {"tips": {}, "race_info": {}, "last_updated": None}
+            else:
+                tips_valid = True
+        else:
+            # race_info 为空（正则匹配失败），无法校验日期，谨慎起见也丢弃
+            print("⚠️  贴士指数赛事信息提取失败（页面结构变更或正则不匹配），忽略贴士数据")
+            tips_data = {"tips": {}, "race_info": {}, "last_updated": None}
+
+    if tips_valid:
         print(f"✅ 获取到 {len(tips_data['tips'])} 条贴士数据")
         if tips_data.get("race_info"):
             ri = tips_data["race_info"]

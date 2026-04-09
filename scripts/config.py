@@ -111,3 +111,22 @@ CONDITION_MAP = {
     "快": "fast", "好地快": "good_to_firm", "好": "good",
     "略黏": "yielding", "黏": "soft", "濕慢": "soft",
 }
+
+# ==============================================================================
+# 顶级TJ组合白名单配置 (v1.6.3 新增)
+# ==============================================================================
+# 顶级骑师+练马师组合有更好的协同效应，满足条件时给予额外加分。
+# 格式：(jockey_prefix, trainer_prefix, bonus)
+# 匹配方式：前缀匹配（不区分大小写）
+
+TOP_TJ_COMBOS = [
+    ("Z Purton", "J Size", 10),
+    ("V R Richards", "J Size", 9),
+    ("Z Purton", "C Fownes", 8),
+    ("K H Yeung", "P F Yiu", 7),
+    ("H T Mo", "K W Lui", 7),
+    ("C L Chau", "K W Lui", 6),
+    ("A Badenoch", "C S Shum", 6),
+    ("J J M Cavieres", "D J Whyte", 6),
+    ("M Chadwick", "A S Cruz", 6),
+]

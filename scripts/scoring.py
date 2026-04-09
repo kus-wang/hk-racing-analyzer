@@ -394,6 +394,90 @@ def score_sectional(pace_index, running_style, track_condition):
 # 冷门判断 & 数据充足度
 # ==============================================================================
 
+def score_weight_bonus(weight: float, venue: str = "ST", distance: int = 1400) -> int:
+    """
+    评分：轻磅马加分 (v1.6.3 新增)
+
+    负磅越低，马匹负重越轻，尤其在跑马地短途赛和转弯多的赛道有利。
+    借鉴对方 skill 思路：负磅 < 120磅给予加分。
+
+    参数：
+        weight   : 负磅（磅）
+        venue    : 本场场地 "ST" / "HV"
+        distance : 本场距离（米）
+
+    返回：
+        int: 加分值 (-5 ~ +11)
+    """
+    if not weight or weight <= 0:
+        return 0
+
+    base_bonus = 0
+    venue_bonus = 0
+
+    # 基础负磅评分
+    if weight < 115:
+        base_bonus = 8   # 超轻磅，显著优势
+    elif weight < 120:
+        base_bonus = 5   # 轻磅，明显优势
+    elif weight < 125:
+        base_bonus = 3   # 轻微轻磅
+    elif weight > 135:
+        base_bonus = -5  # 重磅负担
+    elif weight > 130:
+        base_bonus = -2  # 轻微重磅
+
+    # 跑马地短途赛额外加成（HV转弯多，轻磅更有优势）
+    if venue == "HV" and distance <= 1200:
+        venue_bonus = 3
+    elif venue == "HV" and distance <= 1650:
+        venue_bonus = 1
+
+    return base_bonus + venue_bonus
+
+
+def score_tj_combo_bonus(jockey_name: str, trainer_name: str, top_combos: list = None) -> int:
+    """
+    评分：顶级练马师+骑师组合加分 (v1.6.3 新增)
+
+    借鉴对方 skill 思路：顶级TJ组合有更好的协同效应。
+
+    参数：
+        jockey_name  : 骑师姓名
+        trainer_name : 练马师姓名
+        top_combos   : 顶级TJ组合列表，每项为 (jockey_prefix, trainer_prefix, bonus)
+
+    返回：
+        int: 加分值 (0 ~ +10)
+    """
+    if not jockey_name or not trainer_name:
+        return 0
+
+    if not top_combos:
+        # 默认顶级组合（可根据需要扩展）
+        top_combos = [
+            # (jockey_prefix, trainer_prefix, bonus)
+            ("Z Purton", "J Size", 10),
+            ("Z Purton", "C Fownes", 8),
+            ("K H Yeung", "P F Yiu", 7),
+            ("V R Richards", "J Size", 9),
+            ("H T Mo", "K W Lui", 7),
+            ("C L Chau", "K W Lui", 6),
+            ("A Badenoch", "C S Shum", 6),
+            ("J J M Cavieres", "D J Whyte", 6),
+            ("M Chadwick", "A S Cruz", 6),
+        ]
+
+    jockey_lower = jockey_name.lower().strip()
+    trainer_lower = trainer_name.lower().strip()
+
+    for j_prefix, t_prefix, bonus in top_combos:
+        if jockey_lower.startswith(j_prefix.lower()) and trainer_lower.startswith(t_prefix.lower()):
+            return bonus
+
+    return 0
+
+
 def is_longshot_alert(final_odds, opening_odds, has_same_condition_top3, class_fit_score):
     """
     判断是否满足冷门关注条件。
@@ -614,7 +698,7 @@ def score_tips_index_hkjc(tips_value: float) -> int:
 # 综合评分计算
 # ==============================================================================
 
-def calculate_total_score(horse_data, weights):
+def calculate_total_score(horse_data, weights, top_combos: list = None):
     """
     根据权重和各维度评分计算综合分。
 
@@ -623,6 +707,10 @@ def calculate_total_score(horse_data, weights):
     - odds_value_score：独赢绝对值分档 + 位置赔率加成
     - implied_prob_score：全场标准化隐含胜率（市场共识归一化）
     两者融合得到"赔率市场共识评分"，作为 odds_value 权重的主信号。
+
+    v1.6.3 新增：轻磅马加分 + 顶级TJ组合加分
+    - weight_bonus：负磅 < 120磅时加分，跑马地短途额外加成
+    - tj_combo_bonus：顶级骑练组合加分（默认白名单）
 
     horse_data 字段说明：
         history_same_condition_score : int (0-100)
@@ -637,6 +725,11 @@ def calculate_total_score(horse_data, weights):
         barrier_score                : int (0-100)
         tips_index_score             : int (0-100)
         expert_score                 : int (0-100)
+        weight                       : float (磅)  # v1.6.3 新增
+        venue                        : str        # v1.6.3 新增
+        distance                     : int        # v1.6.3 新增
+        jockey_name                 : str        # v1.6.3 新增
+        trainer_name                : str        # v1.6.3 新增
     """
     # ── v1.4.11 赔率综合评分融合逻辑 ──────────────────────────────
     # odds_value_score    : 独赢赔率绝对值分档(20档) + 位置赔率加成
@@ -659,6 +752,39 @@ def calculate_total_score(horse_data, weights):
 
     horse_data["odds_market_score"] = round(odds_blended, 1)
 
+    # ── v1.6.3 新增：轻磅马加分 + 顶级TJ组合加分 ──────────────────────────
+    # 轻磅加分：负磅越低越有利，尤其HV短途
+    weight = horse_data.get("weight")
+    venue = horse_data.get("venue", "ST")
+    distance = horse_data.get("distance", 1400)
+    weight_bonus = score_weight_bonus(weight, venue, distance)
+    horse_data["weight_bonus_score"] = weight_bonus
+
+    # 顶级TJ组合加分
+    jockey_name = horse_data.get("jockey_name", "")
+    trainer_name = horse_data.get("trainer_name", "")
+    tj_bonus = score_tj_combo_bonus(jockey_name, trainer_name, top_combos)
+    horse_data["tj_combo_bonus_score"] = tj_bonus
+
+    # ── v1.6.2 新增：动态权重转移 —— odds_drift 变化 < 5% 时转移权重至 odds_value ──
+    # 获取原始赔率数据计算变化率
+    opening = horse_data.get("opening_odds")
+    final = horse_data.get("final_odds")
+    adjusted_weights = dict(weights)  # 复制一份可修改的权重
+
+    if opening and final and opening > 0:
+        drift_ratio = abs(opening - final) / opening  # 绝对变化率
+        if drift_ratio < 0.05:  # 变化 < 5%
+            drift_weight = weights.get("odds_drift", 0)
+            if drift_weight > 0:
+                # 将 odds_drift 权重转移到 odds_value（避免无效权重浪费）
+                adjusted_weights["odds_drift"] = 0
+                adjusted_weights["odds_value"] = adjusted_weights.get("odds_value", 0) + drift_weight
+                # 标记说明
+                horse_data["_weight_transfer_reason"] = (
+                    f"odds_drift 变化率 {drift_ratio:.1%} < 5%，权重 {drift_weight}% 转移至 odds_value"
+                )
+
     field_map = {
         "history_same_condition": "history_same_condition_score",
         "history_same_venue": "history_same_venue_score",
@@ -675,8 +801,14 @@ def calculate_total_score(horse_data, weights):
 
     total = 0.0
     for weight_key, score_field in field_map.items():
-        w = weights.get(weight_key, 0)
+        w = adjusted_weights.get(weight_key, 0)  # v1.6.2: 使用调整后的权重
         s = horse_data.get(score_field, 50)  # 默认 50（中性）
         total += w * s
+
+    # ── v1.6.3 新增：加分项直接加入总分 ──────────────────────────────────
+    # weight_bonus: 轻磅加分 (-5 ~ +11)
+    # tj_combo_bonus: 顶级TJ组合加分 (0 ~ +10)
+    total += horse_data.get("weight_bonus_score", 0)
+    total += horse_data.get("tj_combo_bonus_score", 0)
 
     return round(total, 2)

@@ -476,19 +476,24 @@ def fetch_tips_index(force_refresh: bool = False) -> dict:
     """
     url = TIPS_INDEX_URL
 
-    # 尝试从缓存读取
-    cache_file = _cache_path(url)
-    if not force_refresh and os.path.exists(cache_file):
+    # 尝试从缓存读取（使用 _cache_get 获取已解压的 content）
+    if not force_refresh:
         try:
-            with open(cache_file, "r", encoding="utf-8") as f:
-                entry = json.load(f)
-            if time.time() - entry.get("timestamp", 0) < 30 * 60:  # 缓存30分钟
-                print(f"  💾 缓存命中 [tips_index]: {url[:60]}...")
-                return entry.get("content", {})
+            cached = _cache_get(url)
+            if cached is not None:
+                # _cache_get 已处理压缩和 parsed 字段，应返回 dict
+                if isinstance(cached, dict):
+                    print(f"  💾 缓存命中 [tips_index]: {url[:60]}...")
+                    return cached
+                # 兜底：若返回了非 dict（旧缓存），当无数据处理
+                print(f"  ⚠️  缓存类型异常 ({type(cached).__name__})，重新抓取")
+                # fall through to fresh fetch
         except Exception:
             pass
 
     tips = {}  # 初始化贴士字典
+    race_info = {}  # 初始化 race_info（避免正则不匹配时 UnboundLocalError）
+    cache_file = _cache_path(url)  # 保留以供缓存写入
 
     try:
         page = PlaywrightManager.new_page()

@@ -372,11 +372,13 @@ def main():
             today_str     = now.strftime("%Y/%m/%d")
             yesterday_str = (now - timedelta(days=1)).strftime("%Y/%m/%d")
 
+            # 回测任务（23:30）优先找昨天的存档（昨天赛事已结束），
+            # 如果昨天没有，再找今天的（兼容深夜后跨午夜场景）
             archive = (
-                load_prediction_archive(today_str, "ST")
-                or load_prediction_archive(today_str, "HV")
-                or load_prediction_archive(yesterday_str, "ST")
+                load_prediction_archive(yesterday_str, "ST")
                 or load_prediction_archive(yesterday_str, "HV")
+                or load_prediction_archive(today_str, "ST")
+                or load_prediction_archive(today_str, "HV")
             )
             if archive:
                 target_date = archive["meta"].get("date", today_str)
@@ -384,12 +386,49 @@ def main():
                 log("未找到预测存档，跳过回测。（可能今天/昨天均非赛马日）")
                 return
 
-        # 获取 race_info
+        # ── 先从预测存档获取 venue（避免 detect_race_day 对历史日期返回今日数据）──
         archive = None
+        archive_from_meta = (
+            load_prediction_archive(target_date, "ST")
+            or load_prediction_archive(target_date, "HV")
+        )
+        if archive_from_meta:
+            archive_venue     = archive_from_meta["meta"].get("venue", "ST")
+            archive_tot_races = archive_from_meta["meta"].get("total_races", 0)
+            archive_vname     = archive_from_meta["meta"].get("venue_name", archive_venue)
+        else:
+            archive_venue = archive_tot_races = archive_vname = None
+
+        # 用 detect_race_day 补充/校验
         race_info = detect_race_day(target_date)
-        if not race_info:
-            log(f"{target_date} 不是赛马日，无法回测。")
-            return
+
+        if race_info and archive_venue and race_info.get("venue") != archive_venue:
+            # API 返回的场地与存档不符（常见于历史日期 API 返回今日数据）
+            log(
+                f"  ⚠ detect_race_day 返回 {race_info['venue']}，"
+                f"但存档场地为 {archive_venue}，以存档为准（历史日期 API 可能返回今日数据）。"
+            )
+            race_info = {
+                "date":        target_date,
+                "venue":       archive_venue,
+                "venue_name":  archive_vname,
+                "total_races": archive_tot_races,
+            }
+        elif not race_info:
+            if archive_venue:
+                log(
+                    f"  ⚠ detect_race_day 未检测到赛马日，但存档存在，"
+                    f"以存档信息回退（{archive_venue} {archive_tot_races}场）。"
+                )
+                race_info = {
+                    "date":        target_date,
+                    "venue":       archive_venue,
+                    "venue_name":  archive_vname,
+                    "total_races": archive_tot_races,
+                }
+            else:
+                log(f"{target_date} 不是赛马日，无法回测。")
+                return
 
         archive = load_prediction_archive(target_date, race_info.get("venue", "ST"))
         if not archive:

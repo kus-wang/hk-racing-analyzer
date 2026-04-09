@@ -42,6 +42,8 @@
 | **HKJC Tip Index** | — | **6%** | — | Official daily tip index (unchanged) |
 | **External Expert Picks** | — | **0%** | **↓ -4%** | Unstable data source, removed |
 | **Odds System Total** | | **40%** | **↑ +10%** | Odds formally became the dominant prediction signal |
+| **Weight Bonus** | — | **Bonus** | +5~+11 | v1.6.3: Lightweight horses bonus, HV short races extra bonus |
+| **TJ Combo Bonus** | — | **Bonus** | +6~+10 | v1.6.3: Top jockey+trainer combo whitelist bonus |
 | **Total** | | **100%** | | |
 
 > ⚠️ **v1.4.11 Odds Scoring Fusion**: Odds composite score = `win odds tier(20 tiers)×0.4 + implied probability×0.6`, cap=0.50 compresses extreme gaps. 1.8x super favorite → model prediction ~80.6% (implied ~51% + stacked positive signals → reasonable high confidence). Softmax T=4.0, PROB_CAP=0.88.
@@ -386,11 +388,56 @@ Trainer is long-term bound to the horse. Scoring logic similar to jockey, but re
 
 ---
 
+### Lightweight Horse Scoring (v1.6.3 New)
+
+**Weight Bonus**: Lower weight means lighter load for the horse, especially advantageous on Happy Valley short-distance races and tracks with many turns.
+
+Inspired by the other skill: weight < 120 lbs receives bonus points.
+
+| Condition | Bonus | Description |
+|-----------|-------|-------------|
+| Weight < 115 lbs | +8 | Ultra-lightweight, significant advantage |
+| Weight < 120 lbs | +5 | Lightweight, obvious advantage |
+| Weight < 125 lbs | +3 | Slightly lightweight |
+| Weight > 135 lbs | -5 | Heavy weight burden |
+| Weight > 130 lbs | -2 | Slightly heavy |
+| HV Happy Valley ≤ 1200m | +3 | Extra bonus (more turns, lightweight advantage amplified) |
+| HV Happy Valley ≤ 1650m | +1 | Slight bonus |
+
+> This bonus is a direct bonus item, not affected by weights. It is added directly to the total score.
+
+---
+
+### Top TJ Combo Scoring (v1.6.3 New)
+
+**TJ Combo Bonus**: Top jockey + trainer combinations have better synergy.
+
+Inspired by the other skill: Maintain a top TJ combo whitelist. When matched, give extra bonus points.
+
+**Default Top Combo Whitelist**:
+
+| Jockey | Trainer | Bonus |
+|--------|---------|-------|
+| Z Purton | J Size | +10 |
+| V R Richards | J Size | +9 |
+| Z Purton | C Fownes | +8 |
+| K H Yeung | P F Yiu | +7 |
+| H T Mo | K W Lui | +7 |
+| C L Chau | K W Lui | +6 |
+| A Badenoch | C S Shum | +6 |
+| J J M Cavieres | D J Whyte | +6 |
+| M Chadwick | A S Cruz | +6 |
+
+> Matching method: Prefix matching of jockey_name and trainer_name (case-insensitive).
+
+---
+
 ## Revision History
 
-| Date | Changes |
-|------|---------|
-| 2026-04-07 | **v1.5.1 odds_drift end-to-end fix**: opening_odds_snapshot backfill now effective; new `score_win_place_ratio()` win/place ratio cold-shot signal; longshot recommendations enhanced with fake-cold-shot filter |
+| Date | Version | Changes |
+|------|---------|---------|
+| 2026-04-09 | **v1.6.3** | New lightweight horse bonus (score_weight_bonus); New top TJ combo bonus (score_tj_combo_bonus) |
+| 2026-04-07 | **v1.5.1** | odds_drift end-to-end fix: opening_odds_snapshot backfill now effective; new `score_win_place_ratio()` win/place ratio cold-shot signal; longshot recommendations enhanced with fake-cold-shot filter |
 | 2026-04-05 | **v1.4.11 Odds weight optimization**: odds_value 15%→22%, odds_drift 18%→18%, Softmax T=4.0, PROB_CAP=0.88, added 20-tier fine-grained odds scoring, implied probability fusion, place odds bonus |
 | 2026-04-02 | **v1.4.3 Evolution suggestions applied**: ①Softmax temperature 1.5→2.0; ②history_same_condition 18%→16%; ③odds_drift 13%→15%; ④sectional 15%→10% (temporary); ⑤history_same_venue 13%→18%; ⑥score_history time decay added (last 30d×1.0, 31-90d×0.8, 91-180d×0.6, >180d×0.4) |
 | 2026-04-01 | **v1.4.0 Modular refactoring**: analyze_race.py (~600 lines) split into 11 independent modules (main/analyze/scoring/fetch/parse/cache/output/config/weights/probability), entry compatibility layer keeps CLI unchanged |
