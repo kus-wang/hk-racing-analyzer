@@ -84,12 +84,13 @@ DEFAULT_WEIGHTS = {
 # v1.4.11：2.0→4.0 调整
 # v1.4.12：引入动态温度（probability.py 的 dynamic_temperature()），
 #          此处的默认值作为无赔率数据时的回退值（fallback）。
-# 场内赔率离散度档位：
-#   ratio > 20 → T=6.0（超悬殊场）
-#   ratio > 10 → T=5.0（大差异场）
-#   ratio > 5  → T=4.0（正常场，即此默认值）
-#   ratio <= 5 → T=3.0（均衡场，无明显共识）
-SOFTMAX_TEMPERATURE = 4.0
+# 场内赔率离散度档位（probability.py dynamic_temperature()）：
+#   ratio > 20 → T=6.5（超悬殊场）
+#   ratio > 10 → T=5.5（大差异场）
+#   ratio > 5  → T=5.0（正常场，即此默认值）
+#   ratio <= 5 → T=4.5（均衡场，无明显共识）
+# v1.6.4：整体 +0.5，改善高分马高估问题。
+SOFTMAX_TEMPERATURE = 4.5
 
 # 单匹马概率上限
 # v1.4.11：0.50→0.88 调整

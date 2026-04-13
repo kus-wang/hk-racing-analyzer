@@ -12,7 +12,12 @@
 """
 
 import os
+import sys
 from datetime import datetime
+
+# 引入 config 读取实际参数值
+sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
+from config import SOFTMAX_TEMPERATURE
 
 # ──────────────────────────────────────────────────────────────
 # 工具函数
@@ -191,14 +196,14 @@ def _generate_evolution_suggestions(
             "title":     "预测过于激进，高分马命中率偏低",
             "detail":    (
                 f"共 {total_over} 匹马被高估（预测前3但未入前3）。"
-                "建议提高 Softmax 温度参数（当前 1.5 → 建议 2.0），"
+                f"建议提高 Softmax 动态温度各档位（config fallback 4.0 → 4.5），"
                 "使概率分布更均匀，降低极端预测的频率。"
             ),
             "code_change": {
-                "file":    "analyze_race.py",
-                "param":   "SOFTMAX_TEMPERATURE",
-                "current": 1.5,
-                "proposed": 2.0,
+                "file":    "probability.py",
+                "param":   "dynamic_temperature() tiers",
+                "current": "4.0/4.5/5.0/6.0",
+                "proposed": "4.5/5.0/5.5/6.5",
             }
         })
 

@@ -5,7 +5,7 @@
 [![Node.js](https://img.shields.io/badge/Node.js-18+-orange.svg)](https://nodejs.org)
 
 > 数据驱动的香港赛马预测工具，基于历史战绩、赔率走势、配速分段等多维数据，提供前3名概率预测与投注建议。
-> 
+>
 > A data-driven horse racing prediction tool for HKJC races — delivering top-3 probability distribution and betting recommendations.
 
 ---
@@ -16,9 +16,10 @@
 |----------------|---------------------|
 | **多维度分析 / Multi-dimensional** | 12个评分维度：赔率综合(22%)、赔率走势(18%)、同距离同场地历史(13%)、同场地历史(17%)、配速(8%)、骑师(4%)、练马师(3%)、档位(4%)、班次适配(7%)、贴士指数(4%)、轻磅马加分(独立)、TJ组合加分(独立) |
 | **HKJC API 优先架构 / API-First** | GraphQL API 优先 + 官方页面自动回退，实时获取赛事数据 / GraphQL API priority with automatic page-scraping fallback |
-| **智能投注推荐 / Smart Betting** | 保守化策略：A场→双马位置、B场→连赢、C场→连赢、D场→位置；概率优势<15%自动降级 / Conservative strategy: A→DUO_PLACE, B→Q, C→Q, D→PLACE; auto-downgrade when edge <15% |
-| **轻磅马加分 / Weight Bonus** | 负磅越低加分越多，跑马地短途额外加成 / Light-weight bonus with Happy Valley short-distance boost |
-| **TJ组合加分 / TJ Combo Bonus** | 顶级骑师+练马师白名单组合额外加分 / Top Jockey+Trainer combo whitelist bonus |
+| **投注推荐：位置优先 / PLACE-FIRST** | C场→位置、B场→双马位置、A场→DUO_PLACE/WIN、D场→位置；Q（连赢）基本移除，仅极高置信时保留 / C→PLACE, B→DUO_PLACE, A→DUO_PLACE/WIN, D→PLACE; Q largely removed |
+| **Softmax 动态温度 / Dynamic T** | 均衡场4.5、正常场5.0、大差异场5.5、超悬殊场6.5；整体+0.5使概率分布更平滑 / Balanced T=4.5, Normal T=5.0, Diverged T=5.5, Extreme T=6.5 |
+| **轻磅马加分 / Weight Bonus** | 负磅<115磅+8分、<120磅+5分、<125磅+3分；跑马地短途额外加成 / Negative weight bonus with HV short-distance boost |
+| **TJ组合加分 / TJ Combo Bonus** | 顶级骑师+练马师白名单组合额外加分（如 Z Purton+J Size +10分）/ Top Jockey+Trainer combo whitelist bonus |
 | **自我进化引擎 / Self-Evolution** | 对比预测与实际赛果，生成权重优化建议 / Compares predictions with actual results, generates optimization suggestions |
 | **智能缓存 / Smart Caching** | 分层 TTL 缓存 + Zlib 压缩，空间节省 80-90% / Layered TTL caching with Zlib compression |
 | **后备马支持 / Reserve Horses** | 正选退赛时后备马自动递补 / Automatic substitution tracking when declared runners withdraw |
@@ -78,144 +79,186 @@ python scripts/analyze_race.py --cache-stats
 | 排名 / Rank | 马号 / # | 马名 / Horse | 概率 / Prob | 评分 / Score |
 |-------------|----------|--------------|-------------|--------------|
 | 1 | 8 | 浪漫勇士 / Romantic Warrior | 32% | 87 |
-| 2 | 3 | 金钻快线 / Golden Bolt | 21% | 78 |
-| 3 | 5 | 飞龙在天 / Flying Dragon | 16% | 71 |
+| 2 | 3 | 精明时空 / Smart Timespace | 21% | 79 |
+| 3 | 5 | 金玉良言 / Golden Words | 17% | 72 |
 
-### 投注建议 / Betting Recommendations
-- **独赢 / WIN**: #8 浪漫勇士 / Romantic Warrior
-- **连赢 / QUINELLA**: 8, 3
-- **冷门关注 / Dark Horse**: #5 (赔率 18，状态回升 / odds 18, form improving)
+### 💰 推荐投注 / Betting Recommendation
+
+- **推荐方案**: 位置 #8 | 概率覆盖 53.2% | 场型：稳妥型
+- **价值指数**: #8 独赢 1.8 → 超值 🔥
+
+### 📈 各维度评分 / Dimension Scores
+
+| 马号 | 历史场地 | 历史同条件 | 赔率综合 | 赔率走势 | 骑师 | 练马师 |
+|------|---------|-----------|---------|---------|------|-------|
+| 8 | 88 | 85 | 96 | 72 | 68 | 70 |
+| 3 | 75 | 78 | 82 | 65 | 72 | 68 |
+| 5 | 65 | 72 | 74 | 80 | 70 | 75 |
 ```
 
 ---
 
-## 🏗️ 架构 / Architecture
-
-### 双通道数据策略 / Dual-Channel Data Strategy
-
-```
-┌─────────────────┐     ┌─────────────────┐
-│   HKJC API      │────▶│  GraphQL Bridge │
-│  (优先/Primary) │     │  (api_client)   │
-└─────────────────┘     └────────┬────────┘
-                                 │
-                    ┌────────────┴────────────┐
-                    │    结构化缓存 / Cache     │
-                    └────────────┬────────────┘
-                                 │
-                    ┌────────────▼────────────┐
-                    │   分析引擎 / Analyzer    │
-                    └────────────┬────────────┘
-                                 │
-┌─────────────────┐     ┌────────┴────────┐
-│  页面抓取        │────▶│  HTML 解析器     │
-│  (回退/Fallback)│     │  (Playwright)   │
-└─────────────────┘     └─────────────────┘
-```
-
-### 项目结构 / Project Structure
+## 🗂️ 项目结构 / Project Structure
 
 ```
 hk-racing-analyzer/
-├── scripts/
-│   ├── main.py                 # CLI 入口 / CLI entry point
-│   ├── analyze_race.py         # 主分析脚本 / Main analysis script
-│   ├── api_client.py           # Python API 桥接 / Python API bridge
-│   ├── hkjc_api_client.js      # Node.js GraphQL 桥接 / Node.js GraphQL bridge
-│   ├── fetch.py                # 数据抓取（API优先）/ Data fetching (API-first)
-│   ├── parse.py                # HTML 解析 / HTML parsing
-│   ├── analyze.py              # 评分逻辑 / Scoring logic
-│   ├── scoring.py              # 维度评分函数 / Dimension scoring functions
-│   ├── probability.py          # Softmax 归一化 / Softmax normalization
-│   ├── betting.py              # 投注推荐 / Betting recommendations
-│   ├── output.py               # 报告格式化 / Report formatting
-│   ├── cache.py                # 磁盘缓存 / Disk caching
-│   ├── config.py               # 配置 / Configuration
-│   ├── weights.py              # 动态权重计算 / Dynamic weight calculation
-│   ├── daily_scheduler.py      # 自动化调度 / Automation scheduler
-│   ├── race_day.py             # 赛马日检测 / Race day detection
-│   ├── race_results.py         # 赛果抓取 / Results fetching
-│   └── evolution_report.py     # 回测与进化 / Backtesting & evolution
-├── references/                 # 文档与参考资料 / Documentation & references
-├── .archive/                   # 预测存档 / Prediction archives
-├── .evolution/                 # 进化报告 / Evolution reports
-└── .cache/                     # 数据缓存 / Data cache
+├── SKILL.md              # Skill 入口文档（中文）/ Skill entry documentation
+├── SKILL_EN.md           # Skill entry documentation（English）
+├── scripts/              # 核心 Python 分析模块
+│   ├── analyze_race.py   # CLI 入口（兼容层）/ CLI entry (compatibility)
+│   ├── main.py           # 主流程编排 / Main orchestration
+│   ├── analyze.py        # 马匹多维度评分 / Multi-dimension horse scoring
+│   ├── scoring.py        # 评分函数库 / Scoring function library
+│   ├── probability.py    # Softmax 概率归一化 / Softmax probability
+│   ├── weights.py        # 动态权重计算 / Dynamic weight calculation
+│   ├── betting.py        # 投注推荐策略 / Betting recommendation strategy
+│   ├── output.py         # Markdown 报告输出 / Markdown report output
+│   ├── fetch.py          # HTTP/Playwright 抓取 / Data fetching
+│   ├── parse.py          # HTML 解析 / HTML parsing
+│   ├── cache.py          # 磁盘缓存管理 / Disk cache management
+│   ├── config.py         # 配置常量 / Configuration constants
+│   ├── api_client.py     # Python API 客户端 / Python API client
+│   ├── hkjc_api_client.js # Node.js GraphQL bridge
+│   ├── race_day.py       # 赛马日检测 / Race day detection
+│   ├── race_results.py   # 赛果抓取 / Race results fetching
+│   ├── daily_scheduler.py # 每日调度 / Daily scheduler
+│   ├── scheduler_cache.py # 调度缓存 / Scheduler cache
+│   ├── evolution_report.py # 进化报告 / Evolution report
+│   └── apply_evolution.py # 进化建议应用 / Evolution apply tool
+├── .archive/             # 预测存档 / Prediction archives
+├── .evolution/           # 进化建议报告 / Evolution reports
+├── .backups/             # 每次进化应用的代码备份 / Code backups
+└── references/           # 参考文档 / Reference documents
 ```
 
 ---
 
-## ⚙️ 自动化 / Automation
+## ⚙️ 评分维度权重 / Scoring Dimension Weights
 
-| 任务 / Task | 时间 / Schedule | 功能 / Function |
-|-------------|-----------------|-----------------|
-| 赛马日预测 / Race Day Prediction | 每日 14:30 / Daily 14:30 | 检测赛马日 → 批量预测 → 存档 / Detect race day → batch predict → archive |
-| 回测与进化 / Backtest & Evolution | 每日 23:30 / Daily 23:30 | 抓取赛果 → 对比预测 → 生成进化建议 / Fetch results → compare → generate suggestions |
+> ⚠️ 以下为默认值，实际使用 `weights.py` 动态计算（场地/距离/赛制自适应）
 
-### 进化工作流 / Evolution Workflow
+| 维度 / Dimension | 权重 / Weight | 说明 / Note |
+|-----------------|:-------------:|-------------|
+| 赔率综合评分 / Odds Value | 22% | 独赢20档精细评分 + 位置赔率加成 |
+| 赔率走势 / Odds Drift | 18% | 市场资金流向信号 |
+| 同距离同场地历史 / Same Distance+Venue | 13% | 时间衰减加权（近30天×1.0） |
+| 同场地历史 / Same Venue | 17% | 时间衰减加权 |
+| 配速指数 / Sectional Pace | 8% | 跑法×场地状况匹配 |
+| 班次适配 / Class Fit | 7% | 当前班次区间匹配 |
+| 贴士指数 / Tips Index | 4% | HKJC 官方贴士 |
+| 骑师 / Jockey | 4% | 动态评分（历史胜率） |
+| 练马师 / Trainer | 3% | 动态评分（历史胜率） |
+| 档位 / Barrier | 4% | 跑马地/弯道影响 |
 
-```
-[14:30] 检测赛马日 → 批量预测 → .archive/
-              ↓
-[23:30] 抓取实际赛果 → 对比预测 → .evolution/ (建议/suggestions)
-              ↓
-[手动/Manual] 审阅并应用: python scripts/apply_evolution.py --apply N
-```
-
----
-
-## 📖 文档 / Documentation
-
-| 文档 / Document | 说明 / Description |
-|-----------------|-------------------|
-| [SKILL.md](SKILL.md) | 中文 Skill 文档 / Chinese documentation |
-| [SKILL_EN.md](SKILL_EN.md) | 英文 Skill 文档 / English documentation |
-| [RELEASE_NOTES.md](RELEASE_NOTES.md) | 完整更新日志 / Full changelog |
-| [references/](references/) | HKJC URL、权重配置、工作流 / URLs, weight configs, workflow docs |
+> 附加：轻磅马加分（独立，不占权重上限）/ TJ组合加分（独立）
 
 ---
 
-## 🛠️ 配置 / Configuration
+## 💰 投注推荐策略 / Betting Strategy
 
-编辑 `scripts/config.py` 可调整：
+| 场型 / Race Type | 条件 / Condition | 推荐玩法 / Recommendation |
+|-----------------|------------------|--------------------------|
+| **C（标准三强场）** | Top3 概率和 ≥ 60% | **PLACE 位置**（命中率最高，约33%） |
+| **B（双强对决场）** | Top1+Top2 概率和 ≥ 55%，概率差 < 15% | **DUO_PLACE 双马位置**（两匹均进前3即中） |
+| **A（高置信场）** | Top1 ≥ 28%，value_index ≥ 1.05，赔率 ≤ 6 | DUO_PLACE / WIN（仅赔率≤8时推荐DUO_PLACE，>8降级） |
+| **D（开放冷门场）** | 以上不满足 | **PLACE 位置**（保守保底） |
 
-- 各维度权重分配 / Weight distribution across dimensions
-- 数据类型缓存 TTL / Cache TTL by data type
-- 输出格式 (JSON / markdown) / Output format
-- 自动化调度时间 / Automation schedule
+**连赢 Q 玩法**：基本移除，仅在极高置信（Top1+Top2 ≥ 88% 且概率差 < 5%）时保留。
+
+**价值指数**：model_prob / (1/odds × 0.92)，>1.2 为超值 🔥，<0.8 为市场高估 ⚠️
+
+---
+
+## 🧬 Softmax 动态温度 / Dynamic Softmax Temperature
+
+| 赔率离散度（max/min odds）| 温度 T | 场景 / Scenario |
+|:------------------------:|:------:|-----------------|
+| > 20（超悬殊场） | **6.5** | 极大热门 vs 极大冷门 |
+| > 10（大差异场） | **5.5** | 明显热门 |
+| > 5（正常场） | **5.0** | 默认推荐 |
+| ≤ 5（均衡场） | **4.5** | 各马赔率相近，无明显共识 |
+
+无赔率数据时回退使用默认值 T=4.5。
+
+---
+
+## 🔧 高级用法 / Advanced Usage
+
+```bash
+# 批量预测（daily_scheduler）
+python scripts/daily_scheduler.py --mode predict --date 2026/04/12
+
+# 批量回测 + 进化分析
+python scripts/daily_scheduler.py --mode backtest --date 2026/04/08
+
+# 应用进化建议（带自动备份）
+python scripts/apply_evolution.py --apply
+
+# 回滚最近一次进化
+python scripts/apply_evolution.py --rollback
+
+# 查看进化历史
+python scripts/apply_evolution.py --history
+
+# 马匹对比分析
+python scripts/analyze_race.py --venue ST --race 3 --compare 3 7
+
+# 查询赛果
+python scripts/analyze_race.py --venue ST --date 2026/03/30 --results
+```
 
 ---
 
 ## 📝 更新日志 / Changelog
 
-| 版本 / Version | 日期 / Date | 主要更新 / Highlights |
-|---------------|-------------|----------------------|
-| [v1.6.3](RELEASE_NOTES.md#v163--2026-04-09) | 2026-04-09 | 轻磅马加分+顶级TJ组合加分；投注策略保守化（双马位置DUO_PLACE）；修复批量预测2-11场全空+赛马日误判 / Weight bonus + TJ combo bonus; conservative betting (DUO_PLACE); fix batch predict & race-day detection bugs |
-| [v1.6.2](RELEASE_NOTES.md#v162--2026-04-09) | 2026-04-09 | 基于回测优化：Softmax温度调整+独赢降级条件+odds_drift权重转移 / Backtest-driven: softmax tuning, WIN→PLACE downgrade, odds_drift weight transfer |
-| [v1.6.1](RELEASE_NOTES.md#v161--2026-04-09) | 2026-04-09 | 修复backtest历史日期场地误判 / Fix backtest venue misidentification for historical dates |
-| [v1.6.0](RELEASE_NOTES.md#v160--2026-04-08) | 2026-04-08 | HKJC API 优先架构：排位表/赔率/赛马日检测/赛果名次先走 GraphQL，失败自动回退页面 / HKJC API-first architecture with automatic page fallback |
-| [v1.5.2](RELEASE_NOTES.md#v152--2026-04-07) | 2026-04-07 | 重构：daily_scheduler.py 拆分为 5 个模块，代码量削减 64% / Refactored scheduler into 5 modules, 64% code reduction |
-| [v1.5.0](RELEASE_NOTES.md#v150--2026-04-07) | 2026-04-07 | 智能投注推荐模块：场型判断+最优玩法推荐 / Smart betting recommendation module |
-| [v1.4.0](RELEASE_NOTES.md#v140--2026-03-31) | 2026-03-31 | 模块化重构 + 每日自动化 + 自我进化引擎 / Modular refactor, daily automation, self-evolution engine |
+> [!IMPORTANT]
+> **v1.6.4+ 需要 Playwright**：新版 API 优先架构依赖 Playwright 渲染动态页面。
+> 如遇 `pip install -r requirements.txt` 后仍报错，请运行 `playwright install chromium`。
 
-查看完整更新日志 / See full changelog: [RELEASE_NOTES.md](RELEASE_NOTES.md)
+| 版本 / Version | 日期 / Date | 变更 / Changes |
+|:--------------:|:-----------:|----------------|
+| **v1.6.5** | 2026-04-12 | **投注策略重构：位置优先，命中率第一**。<br>历史回测显示 Q 命中率 0%、DUO_PLACE 约 20%、PLACE 理论值 33%。C场改推位置（降级三重彩），B场改推双马位置，A场 DUO_PLACE/WIN 保持（赔率>8降级位置），D场不变。连赢Q基本移除，仅极高置信时保留。`betting.py` 核心重构。 |
+| **v1.6.4** | 2026-04-12 | **Softmax 动态温度整体+0.5**。2026-04-12 沙田回测显示18匹马被高估，低分马命中率偏低。四档温度调整：超悬殊场6.0→6.5，大差异场5.0→5.5，正常场4.5→5.0，均衡场4.0→4.5。fallback值4.0→4.5。`probability.py` + `config.py` 同步更新。 |
+| **v1.6.3** | 2026-04-09 | **新增评分维度：轻磅马加分 + TJ组合加分**。<br>负磅越低加分越多，跑马地短途额外加成；顶级骑师+练马师白名单额外加分。<br>**投注策略保守化**：A场改推DUO_PLACE（替代WIN），C场改推Q（替代TRIO），新增DUO_PLACE双马位置玩法。<br>**Bug修复**：`fetch_tips_index` 批量预测第2-11场全空（race_info UnboundLocalError + 缓存无解压），`detect_race_day` API日期忽略，`tips_index` 日期校验。`scoring.py` + `betting.py` + `fetch.py` + `main.py` + `race_day.py`。 |
+| **v1.6.2** | 2026-04-09 | Softmax 温度均衡场3.0→4.0、正常场4.0→4.5；概率优势不足(<15%)时A场型降级位置；无效odds_drift权重(变化<5%)动态转移至odds_value。 |
+| **v1.6.1** | 2026-04-09 | 修复 backtest 历史日期场地误判：存档优先校验venue，自动发现存档优先查找昨天。 |
+| **v1.6.0** | 2026-04-08 | **🚀 架构升级：HKJC GraphQL API 优先 + 页面抓取回退**。<br>新增 `api_client.py` + `hkjc_api_client.js`，覆盖排位表/赔率/赛马日检测/赛果名次；Windows 控制台编码修复；赛果API finalPosition严格校验。 |
+| **v1.5.2** | 2026-04-07 | `daily_scheduler.py` 拆分为5个模块（调度编排/缓存/赛马日检测/赛果/进化报告），削减64%行数。 |
+| **v1.5.1** | 2026-04-07 | 修复 opening_odds 端到端链路（odds_drift权重18%恢复生效）；新增独赢/位置赔率比值冷门信号评分。 |
+| **v1.5.0** | 2026-04-07 | **💰 智能投注推荐模块**：`determine_bet_type()` / `compute_value_index()` / `get_longshot_tip()` / `check_bet_hit()`；赛马日场地检测误判修复；批量预测控制台输出补全。 |
+| **v1.4.12** | 2026-04-07 | 修复 opening_odds 全链路；tips_index权重6%→4%；hist_same_condition首胜奖励+10→+3；Softmax动态温度（4档T值）。 |
+| **v1.4.11** | 2026-04-05 | 赔率权重30%→40%（赔率综合22%+走势18%）；Softmax T=2.0→4.0，PROB_CAP 0.50→0.88；全场赔率数据注入。 |
+| **v1.4.10** | 2026-04-05 | Playwright DOM提取赔率（修复JS动态渲染问题）。 |
+| **v1.4.9** | 2026-04-05 | 修复批量预测存档全空（缓存返回dict导致TypeError + 字段名兼容）。 |
+| **v1.4.8** | 2026-04-03 | Zlib压缩缓存+结构化parsed字段，节省80-90%空间。 |
+| **v1.4.7** | 2026-04-03 | 投注赔率抓取（bet.hkjc.com，五种玩法）；修复fetch_tips_index NameError。 |
+| **v1.4.6** | 2026-04-03 | 后备马解析与展示；validate_race_entries() 完整性校验。 |
+| **v1.4.5** | 2026-04-03 | Playwright单例复用 + 8线程并行历史抓取（耗时~120s→~20s）；中文场地条件支持；动态班次区间推断。 |
+| **v1.4.4** | 2026-04-02 | 投注建议模块重构（AI自主判断六种玩法）；回测时间09:00→23:30。 |
+| **v1.4.3** | 2026-04-02 | 进化建议全量应用：Softmax T=1.5→2.0；历史权重重构；配速临时降权；时间衰减加权。 |
+| **v1.4.2** | 2026-04-01 | 预测存档归档隔离（completed/目录）；修复每日回测缓存污染问题。 |
+| **v1.4.1** | 2026-03-31 | SKILL文档完善；`analyze_race.py`拆分为9个模块（1778行→9个职责模块）。 |
+| **v1.3.1** | 2026-03-31 | 贴士指数JS动态渲染；排位表正则修复；排序键final_score→total_score；后备马混入修复。 |
+| **v1.3.0** | 2026-03-30 | 每日自动化调度系统（预测+回测+进化分析）；自我进化引擎；预测存档机制。 |
+| **v1.2.0** | 2026-03-30 | 骑师/练马师动态评分（历史胜率统计）；历史战绩新增jockey/trainer字段。 |
+| **v1.1.0** | 2026-03-30 | 磁盘缓存系统（分层TTL）；Softmax概率归一化；场景自适应权重；跑法自动推导。 |
+| **v1.0.0** | 2026-03-xx | 初始发布：基础分析框架、多维度评分、Markdown报告。 |
 
 ---
 
-## ⚠️ 免责声明 / Disclaimer
+## 📚 相关文档 / References
 
-- 本工具仅供**娱乐与学习参考**，不构成投注建议 / This tool is for **entertainment and educational purposes only**, not betting advice
-- 赛马结果受多种不确定因素影响，**历史数据不代表未来表现** / Racing results depend on uncertain factors; **past performance does not guarantee future outcomes**
-- 请**理性参与，量力而行** / Please **bet responsibly and within your means**
-- 所有数据来自 [香港赛马会](https://racing.hkjc.com) 官方网站 / All data sourced from the [Hong Kong Jockey Club](https://racing.hkjc.com) official website
-
----
-
-## 📜 许可证 / License
-
-[MIT](LICENSE) © kus-wang
+| 文档 | 说明 |
+|------|------|
+| `SKILL.md` | OpenClaw Skill 入口（中文） |
+| `SKILL_EN.md` | OpenClaw Skill 入口（English） |
+| `references/workflow.md` | 完整工作流程详解（CLI用法/投注逻辑/马匹对比/赛果查询） |
+| `references/analysis_weights.md` | 各评分维度权重详解 |
+| `references/analysis_weights_en.md` | Scoring weights reference (English) |
+| `OPTIMIZATION_PLAN.md` | 长期优化路线图 |
 
 ---
 
-<p align="center">
-  Built with ❤️ for HKJC racing enthusiasts / 为香港赛马爱好者而建
-</p>
+## 📄 License
+
+MIT License — 详见 `LICENSE` 文件。

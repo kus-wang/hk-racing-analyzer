@@ -234,19 +234,21 @@ def dynamic_temperature(win_odds_map: dict) -> float:
     ratio = max_odds / min_odds  # 离散度
 
     if ratio > 20:
-        return 6.0   # 悬殊场：超级大热门 vs 极大冷门
+        return 6.5   # 悬殊场：超级大热门 vs 极大冷门
     elif ratio > 10:
-        return 5.0   # 大差异场：明显热门存在
+        return 5.5   # 大差异场：明显热门存在
     elif ratio > 5:
-        return 4.0   # 正常场（config 默认值）
+        return 5.0   # 正常场（config 默认值）
     else:
-        return 3.0   # 均衡场：市场无共识，降低T让模型更聚焦
+        return 4.5   # 均衡场：市场无共识，降低T让模型更聚焦
 ```
+
+> **v1.6.4 动态温度整体 +0.5**：改善高分马高估问题（2026-04-12 沙田回测：18匹马预测前3但未入前3）。
 
 **概率计算**（`probability.py` → `softmax_probability()`）：
 
 ```python
-def softmax_probability(scores, temperature=4.0, cap=0.88):
+def softmax_probability(scores, temperature=4.5, cap=0.88):
     # 1. Softmax 归一化
     exp_scores = [math.exp((s - max_score) / temperature) for s in scores]
     total_exp = sum(exp_scores)
@@ -479,6 +481,7 @@ def get_weights(venue, distance, track_type, race_scenario):
 
 | 日期 | 版本 | 修改内容 |
 |------|------|---------|
+| 2026-04-12 | **v1.6.4** | Softmax 动态温度整体 +0.5（4.0/4.5/5.0/6.0 → 4.5/5.0/5.5/6.5），改善高分马高估问题 |
 | 2026-04-09 | **v1.6.3** | 新增轻磅马加分（score_weight_bonus）；新增顶级TJ组合加分（score_tj_combo_bonus）|
 | 2026-04-07 | v1.5.1 | odds_drift 端到端修复（opening_odds_snapshot 回填生效）；新增 `score_win_place_ratio()` 独赢/位置比值冷门信号；冷门推荐增强过滤假冷门 |
 | 2026-04-07 | v1.5.0 | betting.py 投注推荐模块上线（WIN/PLACE/Q/TRIO 四种玩法 + 价值指数 + 回测命中验证）；`detect_race_day()` 修复场地检测误判 |
@@ -489,12 +492,4 @@ def get_weights(venue, distance, track_type, race_scenario):
 | 2026-03-30 | — | 骑师/练马师评分动态化；初版权重优化；Softmax+概率上限约束 |
 
 
-| 日期 | 版本 | 修改内容 |
-|------|------|---------|
-| 2026-04-07 | v1.5.1 | odds_drift 端到端修复（opening_odds_snapshot 回填生效）；新增 `score_win_place_ratio()` 独赢/位置比值冷门信号；冷门推荐增强过滤假冷门 |
-| 2026-04-07 | v1.5.0 | betting.py 投注推荐模块上线（WIN/PLACE/Q/TRIO 四种玩法 + 价值指数 + 回测命中验证）；`detect_race_day()` 修复场地检测误判 |
-| 2026-04-07 | v1.4.12 | 进化建议：①opening_odds 快照修复（drift 不再失效）；②tips_index 6%→4%；③hist_same_condition 首胜加权 +10→+3；④Softmax T 动态化（T=3~6）|
-| 2026-04-05 | v1.4.11 | 赔率权重 30%→40%（odds_value 22% + odds_drift 18%）；新增隐含胜率融合评分；20档精细分档；Softmax T=4.0，PROB_CAP=0.88 |
-| 2026-04-02 | v1.4.3 | Softmax 温度 1.5→2.0；历史战绩时间衰减加权（近30天×1.0，31-90天×0.8，91-180天×0.6，>180天×0.4）|
-| 2026-04-01 | v1.4.0 | 模块化重构：analyze_race.py 拆分为 11 个独立模块 |
-| 2026-03-30 | — | 骑师/练马师评分动态化；初版权重优化；Softmax+概率上限约束 |
+

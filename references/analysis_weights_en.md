@@ -186,7 +186,7 @@ Pace Index > 1.0 → Weak late sprint ability (low score)
 ```python
 import numpy as np
 
-def calculate_probability(scores, temperature=4.0):
+def calculate_probability(scores, temperature=4.5):
     """
     Use Softmax normalization to calculate probability,
     avoiding extreme bias from linear normalization.
@@ -436,6 +436,7 @@ Inspired by the other skill: Maintain a top TJ combo whitelist. When matched, gi
 
 | Date | Version | Changes |
 |------|---------|---------|
+| 2026-04-12 | **v1.6.4** | Softmax dynamic temperature tiers all +0.5 (4.0/4.5/5.0/6.0 → 4.5/5.0/5.5/6.5), reducing overestimation of top-3 horses |
 | 2026-04-09 | **v1.6.3** | New lightweight horse bonus (score_weight_bonus); New top TJ combo bonus (score_tj_combo_bonus) |
 | 2026-04-07 | **v1.5.1** | odds_drift end-to-end fix: opening_odds_snapshot backfill now effective; new `score_win_place_ratio()` win/place ratio cold-shot signal; longshot recommendations enhanced with fake-cold-shot filter |
 | 2026-04-05 | **v1.4.11 Odds weight optimization**: odds_value 15%→22%, odds_drift 18%→18%, Softmax T=4.0, PROB_CAP=0.88, added 20-tier fine-grained odds scoring, implied probability fusion, place odds bonus |

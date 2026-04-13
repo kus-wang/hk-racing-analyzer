@@ -49,7 +49,7 @@ def compute_value_index(model_prob: float, win_odds: float | None) -> float | No
 # 玩法常量
 BET_WIN       = "WIN"
 BET_PLACE     = "PLACE"
-BET_DUO_PLACE = "DUO_PLACE"  # v1.6.3: 双马位置
+BET_DUO_PLACE = "DUO_PLACE"  # v1.6.5: 双马位置（场型A/B推荐，比Q宽松）
 BET_Q         = "Q"
 BET_TRIO      = "TRIO"
 
@@ -85,8 +85,8 @@ def determine_bet_type(sorted_horses: list) -> dict:
 
     返回：
         {
-            "bet_type":     "WIN" | "PLACE" | "Q" | "TRIO",
-            "bet_name":     "独赢" | "位置" | "连赢" | "三重彩",
+            "bet_type":     "WIN" | "PLACE" | "DUO_PLACE" | "Q" | "TRIO",
+            "bet_name":     "独赢" | "位置" | "双马位置" | "连赢" | "三重彩",
             "selections":   [马号列表]，推荐选马
             "selection_names": [马名列表]，
             "scene":        "A" | "B" | "C" | "D"，
@@ -102,9 +102,17 @@ def determine_bet_type(sorted_horses: list) -> dict:
         C：标准三强场 — top3 概率和 ≥ 60%（默认最常见）
         D：开放冷门场 — 以上都不满足
 
+    推荐策略（v1.6.5：位置优先，命中率第一）：
+        D → PLACE 首选第1马（命中率最高）
+        C → PLACE 首选第1马（放弃 Q，改用更稳的位置）
+        B → DUO_PLACE（第1+第2马都在前3即中，比 Q 宽松）
+        A → WIN 仅超级强势马（概率≥40%且领先≥20%且赔率2-4）
+        A → DUO_PLACE 其他高置信场景
+        Q → 仅在极罕见极高置信场保留（前两名概率和 ≥ 88% 且概率差 < 5%）
+
     降级规则：
-        WIN → 若独赢赔率 < 1.5（期望值 < 1），降级为 PLACE
-        Q   → 若 top2 赔率均 > 12，降级为 TRIO
+        WIN → 若赔率 < 2.0（期望值过低），降级为 PLACE
+        DUO_PLACE → 若首选马赔率 > 8，降级为 PLACE
     """
     if not sorted_horses or len(sorted_horses) < 3:
         return _default_bet(sorted_horses)
@@ -131,51 +139,50 @@ def determine_bet_type(sorted_horses: list) -> dict:
     no3 = _get_no(top3)
 
     # ── 场型 A：高置信独赢场 ──
-    # v1.6.3: 分层策略 — 超级强势单马推WIN，其他推DUO_PLACE
     if p1 >= 28 and odds1 and odds1 <= 6.0:
         vi_val = vi1 if vi1 else 1.0
-        prob_gap = p1 - p2  # 概率优势
-        if vi_val >= 1.05:
-            # 条件1：超级强势单马 → WIN（极高置信+显著领先+合理赔率）
-            if p1 >= 40 and prob_gap >= 20 and 2.0 <= odds1 <= 4.0:
-                return _make_bet(
-                    BET_WIN, [no1], [_get_name(top1)], "A", p1,
-                    vi1, f"#{no1} 超级强势（{p1:.1f}%），领先 #{no2} {prob_gap:.1f}%，赔率 {odds1}，独赢"
-                )
-            # 其他高置信场景 → DUO_PLACE（双马位置更稳）
+        prob_gap = p1 - p2
+        # 超级强势单马 → WIN（极高置信+显著领先+合理赔率）
+        if p1 >= 40 and prob_gap >= 20 and 2.0 <= odds1 <= 4.0:
+            return _make_bet(
+                BET_WIN, [no1], [_get_name(top1)], "A", p1,
+                vi1, f"#{no1} 超级强势（{p1:.1f}%），领先 #{no2} {prob_gap:.1f}%，赔率 {odds1}，独赢"
+            )
+        # 其他高置信场景 → DUO_PLACE（仅在赔率适中时推荐）
+        if odds1 <= 8:
             return _make_bet(
                 BET_DUO_PLACE, [no1, no2], [_get_name(top1), _get_name(top2)], "A", top2_sum,
                 vi1, f"#{no1}+{no2} 双强格局（{p1:.1f}% + {p2:.1f}%），双马位置更稳"
             )
+        # 赔率偏高，降级为位置
+        return _make_bet(
+            BET_PLACE, [no1], [_get_name(top1)], "A", p1,
+            vi1, f"#{no1} 概率 {p1:.1f}% 但赔率 {odds1} 偏高，位置更稳"
+        )
 
-    # ── 场型 B：双强对决场 ──
+    # ── 场型 B：双强对决场 → DUO_PLACE（放弃 Q）──
     if top2_sum >= 55 and abs(p1 - p2) < 15:
-        # 降级检查：两头赔率都太高，Q 也不划算
-        if odds1 and odds2 and odds1 > 12 and odds2 > 12:
+        # 两匹马赔率都不高时，推 DUO_PLACE
+        if not odds1 or not odds2 or odds1 <= 10:
             return _make_bet(
-                BET_TRIO, [no1, no2, no3],
-                [_get_name(top1), _get_name(top2), _get_name(top3)],
-                "B", top3_sum, vi1,
-                f"#{no1}+#{no2} 赔率均 >12，连赢性价比低，改推三重彩"
+                BET_DUO_PLACE, [no1, no2], [_get_name(top1), _get_name(top2)], "B", top2_sum,
+                vi1, f"#{no1}({p1:.1f}%)+#{no2}({p2:.1f}%) 双强对决，双马位置更稳"
             )
+        # 赔率偏高，降级为位置
         return _make_bet(
-            BET_Q, [no1, no2],
-            [_get_name(top1), _get_name(top2)],
-            "B", top2_sum, vi1,
-            f"#{no1}({p1:.1f}%)+#{no2}({p2:.1f}%) 概率和 {top2_sum:.1f}%，对决格局"
+            BET_PLACE, [no1], [_get_name(top1)], "B", p1,
+            vi1, f"#{no1} 概率 {p1:.1f}%，赔率 {odds1} 偏高，位置保守"
         )
 
-    # ── 场型 C：标准三强场（最常见）──
-    # v1.6.3: 改为推荐 Q（连赢），TRIO 三重彩命中难度太高
+    # ── 场型 C：标准三强场 → 位置（放弃 Q）──
     if top3_sum >= 60:
+        # 首选第1马做位置，命中率最高
         return _make_bet(
-            BET_Q, [no1, no2],
-            [_get_name(top1), _get_name(top2)],
-            "C", top2_sum, vi1,
-            f"#{no1}+{no2} 概率和 {top2_sum:.1f}%，连赢性价比更稳"
+            BET_PLACE, [no1], [_get_name(top1)], "C", top3_sum,
+            vi1, f"#{no1} 概率 {p1:.1f}%，首选位置稳健"
         )
 
-    # ── 场型 D：开放冷门场 ──
+    # ── 场型 D：开放冷门场 → 位置（默认）──
     return _make_bet(
         BET_PLACE, [no1],
         [_get_name(top1)],
@@ -267,8 +274,7 @@ def check_bet_hit(bet_rec: dict, actual_top: list) -> dict:
     命中规则：
         WIN   : 推荐[no1] == 实际第1
         PLACE : 推荐[no1] in 实际前3
-        Q     : set(推荐[no1,no2]) ⊆ set(实际前4) — 实际前4放宽（Q 派彩规则是前2名任意顺序）
-                实际精确：推荐的两匹马恰好是实际前2名（顺序不限）
+        Q     : set(推荐[no1,no2]) ⊆ set(实际前2) — 连赢规则：必须是第1+第2名（顺序不限）
         TRIO  : set(推荐[no1,no2,no3]) == set(实际前3) — 顺序不限
     """
     if not bet_rec or not actual_top:
@@ -276,7 +282,7 @@ def check_bet_hit(bet_rec: dict, actual_top: list) -> dict:
 
     bet_type   = bet_rec.get("bet_type")
     selections = [str(s) for s in bet_rec.get("selections", [])]
-    actual_nos = [str(h["no"]) for h in actual_top[:4]]  # 取前4用于 Q 验证
+    actual_nos = [str(h["no"]) for h in actual_top[:4]]  # 取前4（Q需前2，PLACE需前3）
     actual_top3 = set(actual_nos[:3])
     winner = actual_nos[0] if actual_nos else None
 
@@ -317,9 +323,9 @@ def check_bet_hit(bet_rec: dict, actual_top: list) -> dict:
 
     elif bet_type == BET_Q:
         sel_set = set(selections)
-        # v1.6.3: 放宽 Q 命中条件 — 推荐的两匹马都在实际前4名即可（原要求恰好前2名）
-        actual_top4 = set(actual_nos[:4])
-        hit = sel_set.issubset(actual_top4) and len(sel_set) == 2
+        # 连赢规则：推荐的两匹马必须是实际第1名+第2名（顺序不限）
+        actual_top2 = set(actual_nos[:2])
+        hit = sel_set.issubset(actual_top2) and len(sel_set) == 2
         return {
             "bet_type": bet_type,
             "selections": selections,
@@ -327,7 +333,7 @@ def check_bet_hit(bet_rec: dict, actual_top: list) -> dict:
             "hit": hit,
             "hit_detail": (
                 f"连赢 {selections} {'命中' if hit else '未中'}"
-                f"（实际前4: {list(actual_nos[:4])}）"
+                f"（实际前2: {list(actual_nos[:2])}）"
             ),
         }
 

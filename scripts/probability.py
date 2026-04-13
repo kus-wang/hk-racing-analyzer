@@ -23,13 +23,12 @@ def dynamic_temperature(win_odds_map: dict) -> float:
     赔率离散度 = 全场最高赔率 / 全场最低赔率（剔除 None/0）
 
     档位：
-        ratio > 20  → T = 6.0（悬殊场：超级大热门 vs 极大冷门）
-        ratio > 10  → T = 5.0（大差异场：明显热门）
-        ratio > 5   → T = 4.5（正常场：默认值）
-        ratio <= 5  → T = 4.0（均衡场：各马赔率相近，市场无明显共识）
+        ratio > 20  → T = 6.5（悬殊场：超级大热门 vs 极大冷门）
+        ratio > 10  → T = 5.5（大差异场：明显热门）
+        ratio > 5   → T = 5.0（正常场：默认值）
+        ratio <= 5  → T = 4.5（均衡场：各马赔率相近，市场无明显共识）
 
-    v1.6.2 调整：最低档从 3.0 → 4.0，正常场从 4.0 → 4.5，
-    降低对冠军的过度确信，改善"预测在第二但实际冠军"的排序问题。
+    v1.6.4 调整：整体 +0.5（进化建议1），改善高分马高估问题（2026-04-12 沙田回测：18匹马预测前3但未入前3）。
 
     无赔率数据时返回默认值 SOFTMAX_TEMPERATURE（config.py中配置）。
 
@@ -52,13 +51,13 @@ def dynamic_temperature(win_odds_map: dict) -> float:
     ratio = max_odds / min_odds
 
     if ratio > 20:
-        return 6.0
+        return 6.5
     elif ratio > 10:
-        return 5.0
+        return 5.5
     elif ratio > 5:
-        return 4.5
+        return 5.0
     else:
-        return 4.0
+        return 4.5
 
 
 def softmax_probability(scores, temperature=SOFTMAX_TEMPERATURE, cap=PROB_CAP):
