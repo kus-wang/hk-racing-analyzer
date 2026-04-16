@@ -26,22 +26,22 @@
 
 ### Base Weights (Default Scenario)
 
-> Last updated: 2026-04-05 (v1.4.11 odds weight optimization)
+> Last updated: 2026-04-16 (v1.6.6 odds weight rebalance)
 
 | Dimension | Sub-dimension | Weight | Change | Notes |
 |-----------|---------------|--------|--------|-------|
-| **Historical Performance** | Same distance + venue, last 5 races | **13%** | ↓ -3% | Reduced history weight, supplemented by odds consensus |
-| | Same venue (any distance), last 5 races | **15%** | ↓ -3% | Same as above |
-| | Class fit (rating vs race class match) | **7%** | ↓ -1% | Secondary factor |
-| **Odds** | Final odds composite score | **22%** | **↑ +7%** | 20-tier win odds + place bonus + implied probability fusion (v1.4.11) |
-| | Odds drift (opening → final change magnitude) | **18%** | **↑ +3%** | Reflects capital flow, market signals valued more |
-| **Pace/Sectionals** | Pace index (late sprint ability) | **8%** | ↓ -2% | ⚠️ Temporarily reduced (no empirical data yet), restore to 10% when data is connected |
-| **Jockey** | — | **4%** | ↓ -1% | Dynamic calculation based on win/top3 rate of jockey × this horse in historical records |
-| **Trainer** | — | **3%** | ↓ -1% | Dynamic calculation based on win/top3 rate of trainer × this horse in historical records |
-| **Barrier** | — | **4%** | ↓ -1% | Same-distance barrier win rate statistics |
-| **HKJC Tip Index** | — | **6%** | — | Official daily tip index (unchanged) |
-| **External Expert Picks** | — | **0%** | **↓ -4%** | Unstable data source, removed |
-| **Odds System Total** | | **40%** | **↑ +10%** | Odds formally became the dominant prediction signal |
+| **Historical Performance** | Same distance + venue, last 5 races | **15%** | ↑ +2% | Redistributed from odds_drift |
+| | Same venue (any distance), last 5 races | **18%** | ↑ +3% | Same as above |
+| | Class fit (rating vs race class match) | **8%** | ↑ +1% | |
+| **Odds** | Final odds composite score | **30%** | **↑ +8%** | Primary market consensus signal |
+| | Odds drift (opening → final change magnitude) | **0%** | **↓ -18%** | ⚠️ v1.6.6: Drift data unavailable, weight zeroed (logic retained) |
+| **Pace/Sectionals** | Pace index (late sprint ability) | **9%** | ↑ +1% | |
+| **Jockey** | — | **6%** | ↑ +2% | Dynamic calculation based on win/top3 rate of jockey × this horse in historical records |
+| **Trainer** | — | **4%** | ↑ +1% | Dynamic calculation based on win/top3 rate of trainer × this horse in historical records |
+| **Barrier** | — | **5%** | ↑ +1% | Same-distance barrier win rate statistics |
+| **HKJC Tip Index** | — | **5%** | ↓ -1% | Official daily tip index |
+| **External Expert Picks** | — | **0%** | — | Unstable data source, removed |
+| **Odds System Total** | | **30%** | **↓ -10%** | odds_drift归零后赔率系仅剩odds_value |
 | **Weight Bonus** | — | **Bonus** | +5~+11 | v1.6.3: Lightweight horses bonus, HV short races extra bonus |
 | **TJ Combo Bonus** | — | **Bonus** | +6~+10 | v1.6.3: Top jockey+trainer combo whitelist bonus |
 | **Total** | | **100%** | | |
@@ -56,34 +56,27 @@
 
 ### Happy Valley (HV) Races
 - Barrier weight increases: 5% → 8% (tight turns, inner barrier advantage)
-- Corresponding reduction: same-venue history 10% → 7%
+- Corresponding reduction: same-venue history 18% → 15%
 
 ### Sha Tin (ST) Long Distance (1800m+)
-- Pace weight increases: 15% → 20% (long distance pace strategy more important)
-- Corresponding reduction: final odds absolute value 15% → 10%
+- Pace weight increases: 9% → 14% (long distance pace strategy more important)
+- Corresponding reduction: final odds absolute value 30% → 25%
 
 ### Dirt Races
 - Adds "dirt suitability" sub-dimension, weight 10%
 - From "same distance + venue" history 15% → 5%, specifically looking at dirt performance
-- Same-venue history 10% → 0% (fully replaced by dirt-related dimensions)
+- Same-venue history 18% → 0% (fully replaced by dirt-related dimensions)
 
 ### First-Time Starters (Newcomers)
 - Same distance + venue history weight set to 0% (no reference)
-- Adds "morning trackwork state/rating" dimension as replacement, weight 15%
-- Class fit increases: 8% → 15%
-- Tip index increases: 6% → 8% (newcomers rely more on official tips)
+- Odds value increases: 30% → 40% (newcomers rely more on market signals)
+- Tip index increases: 5% → 10% (newcomers rely more on official tips)
+- Jockey/Trainer become primary signals (11%/13%)
+- Class fit increases: 8% → 16%
 
-### Class-Down Horses
-- Class fit increases: 8% → 15%
-- Odds drift increases: 13% → 18% (market reacts more sensitively to class-down horses)
-- Tip index decreases: 6% → 4%
-- Corresponding reduction: external expert picks 4% → 0%
-
-### Class-Up Horses
-- History weight reduced: same distance + venue 15% → 8% (different high-class competition)
-- Odds drift increases: 13% → 18%
-- Tip index decreases: 6% → 4%
-- Corresponding reduction: external expert picks 4% → 0%
+### Class-Down / Class-Up Horses
+- These scenario adjustments are not currently implemented in `weights.py`
+- The base weight configuration applies to all race types uniformly
 
 ---
 
@@ -225,66 +218,49 @@ def get_weights(venue, distance, track_type, race_scenario):
 
     race_scenario options:
         "normal"      - Normal race (default)
-        "newcomer"    - First-time starter
-        "class_down"  - Class drop
-        "class_up"    - Class rise
+        "newcomer"    - First-time starter (no same-condition history)
     """
-    # Default weights (latest version, v1.4.11)
+    # Base weights (v1.6.6)
     weights = {
-        "history_same_condition": 0.13,   # Same distance + venue history
-        "history_same_venue":     0.15,   # Same venue (any distance) history
-        "class_fit":              0.07,   # Class fit
-        "odds_value":             0.22,   # Final odds absolute value
-        "odds_drift":             0.18,   # Odds drift
-        "sectional":              0.08,   # Pace/sectional index
-        "jockey":                 0.04,   # Jockey (dynamic scoring)
-        "trainer":                0.03,   # Trainer (dynamic scoring)
-        "barrier":                0.04,   # Barrier
-        "expert":                 0.00,   # Expert picks (removed in v1.4.11)
-        "tips":                   0.06,   # HKJC tip index
+        "history_same_condition": 0.15,   # Same distance + venue history
+        "history_same_venue":     0.18,   # Same venue (any distance) history
+        "class_fit":              0.08,   # Class fit
+        "odds_value":             0.30,   # Final odds absolute value
+        "odds_drift":             0.00,   # Odds drift (unavailable, logic retained)
+        "sectional":              0.09,   # Pace/sectional index
+        "jockey":                 0.06,   # Jockey (dynamic scoring)
+        "trainer":                0.04,   # Trainer (dynamic scoring)
+        "barrier":                0.05,   # Barrier
+        "expert":                 0.00,   # Expert picks (removed)
+        "tips":                   0.05,   # HKJC tip index
     }
 
     # Scenario adjustments
     if race_scenario == "newcomer":
+        # 15%+18% history → 0, redistributed to market-dependent dimensions
         weights["history_same_condition"] = 0.00
         weights["history_same_venue"]     = 0.00
-        weights["class_fit"]              = 0.15
-        weights["tips"]                   = 0.08
-        # Returned weight distributed to jockey and trainer
-        weights["jockey"]   = 0.15
-        weights["trainer"]  = 0.13
-        weights["odds_value"] = 0.20
-        weights["odds_drift"] = 0.14
-
-    elif race_scenario == "class_down":
-        weights["class_fit"]  = 0.15
-        weights["odds_drift"] = 0.18
-        weights["expert"]     = 0.00
-        weights["tips"]       = 0.04
-        weights["history_same_condition"] = 0.10
-        weights["history_same_venue"]     = 0.07
-
-    elif race_scenario == "class_up":
-        weights["history_same_condition"] = 0.08
-        weights["odds_drift"] = 0.18
-        weights["expert"]     = 0.00
-        weights["tips"]       = 0.04
-        weights["history_same_condition"] = 0.08
-        weights["history_same_venue"]     = 0.09
+        weights["odds_value"]            = 0.40   # ↑ +10% (primary market signal)
+        weights["tips"]                  = 0.10   # ↑ +5%
+        weights["jockey"]                = 0.11   # ↑ +5%
+        weights["trainer"]               = 0.13   # ↑ +9%
+        weights["class_fit"]             = 0.16   # ↑ +8%
+        weights["sectional"]             = 0.05   # ↓ -4%
+        weights["barrier"]               = 0.05   # (unchanged)
 
     # Venue adjustments
     if venue == "HV":
-        weights["barrier"]            += 0.03
-        weights["history_same_venue"] -= 0.03
+        weights["barrier"]            += 0.03   # 0.05 → 0.08
+        weights["history_same_venue"] -= 0.03   # 0.18 → 0.15
 
     # Distance adjustments
     if distance >= 1800:
-        weights["sectional"]  += 0.05
-        weights["odds_value"] -= 0.05
+        weights["sectional"]  += 0.05   # 0.09 → 0.14
+        weights["odds_value"] -= 0.05   # 0.30 → 0.25
 
     # Dirt adjustments
     if track_type == "dirt":
-        weights["history_same_condition"] = 0.05  # Specifically look at dirt performance
+        weights["history_same_condition"] = 0.05  # Dirt-specific performance
         weights["history_same_venue"]     = 0.00
         weights["class_fit"]             += 0.05
 

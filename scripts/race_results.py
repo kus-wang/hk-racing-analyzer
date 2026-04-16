@@ -113,7 +113,7 @@ def fetch_actual_results(race_info: dict) -> dict:
             date_str,
             venue,
             race_no,
-            force_refresh=False,
+            force_refresh=True,  # v1.6.6: backtest 强制刷新，防止赛前 finalPosition=0 缓存污染赛后数据
             cache_ttl=CACHE_SECONDS,
         )
         parsed = _parse_result_api(api_payload) if api_payload else None

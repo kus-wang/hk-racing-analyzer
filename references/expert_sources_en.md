@@ -7,14 +7,14 @@
 |--------|-----|-------------|
 | Hong Kong Jockey Club | racing.hkjc.com | Official data and tips |
 | HKJC YouTube | youtube.com/@hkjc | Race highlights and analysis |
-| **HKJC Tips Index** | racing.hkjc.com/racing/chinese/tipsindex/tips_index.asp | **Official daily tips index (6% weight)** |
+| **HKJC Tips Index** | racing.hkjc.com/racing/chinese/tipsindex/tips_index.asp | **Official daily tips index (5% weight)** |
 
 #### HKJC Tips Index Description
 - **Data Source**: Official HKJC website daily published tips index
 - **Index Range**: Usually 80-120, 100 as baseline
   - > 100: Market favors (well-regarded)
   - < 100: Market dislikes (underestimated)
-- **Weight Setting**: **6%** (higher than external expert predictions at 4%)
+- **Weight Setting**: **5%** (official daily signal, complementary to odds consensus)
 - **Scoring Rules**:
   - Index 100 → Score 50 (neutral)
   - Every 5 points deviation → Score ±10
@@ -97,7 +97,7 @@ def calculate_expert_consensus(horse_id, expert_recommendations):
 2. **Deduplicate**: Merge duplicate recommendations from same expert
 3. **Statistics**: Calculate expert consensus for each horse
 4. **Convert**: Convert consensus to score (0-100)
-5. **Integrate**: Merge into final score with 6% weight
+5. **Integrate**: Merge into final score with 5% weight
 
 ## Notes
 

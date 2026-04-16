@@ -27,22 +27,22 @@
 
 ### 基础权重（默认场景）
 
-> 最后更新：2026-04-07（v1.4.12 + v1.5.0，与 `config.py` DEFAULT_WEIGHTS 完全一致）
+> 最后更新：2026-04-16（v1.6.6，与 `config.py` DEFAULT_WEIGHTS 完全一致）
 
 | 维度 | 子维度 | 权重 | 变化 | 说明 |
 |------|--------|------|------|------|
-| **历史战绩** | 同距离+同场地近5场 | **13%** | ↓ -3% | 降低历史数据权重，由赔率共识补充 |
-| | 同场地（不限距离）近5场 | **17%** | ↑ +2% | tips_index 6%→4% 释放权重（v1.4.12）|
-| | 班次适配度（评分与班次匹配） | **7%** | ↓ -1% | 次要因素 |
-| **赔率** | 临场赔率综合评分 | **22%** | **↑ +7%** | 独赢20档+位置赔率加成+隐含胜率融合（v1.4.11）|
-| | 赔率走势（开盘→临场变化幅度） | **18%** | **↑ +3%** | 反映资金流向，市场信号更受重视 |
-| **配速/分段** | 配速指数（后段冲刺能力）| **8%** | ↓ -2% | ⚠️ 临时降权（缺实测数据），待接入后恢复10% |
-| **骑师** | — | **4%** | ↓ -1% | 基于历史战绩中骑师×本马的胜率/前3率动态计算 |
-| **练马师** | — | **3%** | ↓ -1% | 基于历史战绩中练马师×本马的胜率/前3率动态计算 |
-| **档位** | — | **4%** | ↓ -1% | 同距离档位胜率统计 |
-| **HKJC贴士指数** | — | **4%** | ↓ -2% | v1.4.12：降低与赔率共线重复信号 |
-| **外部专家预测** | — | **0%** | **↓ -4%** | 信息来源不稳定，已移除 |
-| **赔率系合计** | | **40%** | **↑ +10%** | 赔率正式成为预测主导信号 |
+| **历史战绩** | 同距离+同场地近5场 | **15%** | ↑ +2% | 从 odds_drift 释放的权重补充 |
+| | 同场地（不限距离）近5场 | **18%** | ↑ +1% | 同上 |
+| | 班次适配度（评分与班次匹配） | **8%** | ↑ +1% | 班次适应度稳定可靠 |
+| **赔率** | 临场赔率综合评分 | **30%** | **↑ +8%** | 赔率是直接市场共识信号 |
+| | 赔率走势（开盘→临场变化幅度） | **0%** | **↓ -18%** | ⚠️ v1.6.6：临场赔率走势暂时无法获取，保留评分逻辑但归零权重 |
+| **配速/分段** | 配速指数（后段冲刺能力）| **9%** | ↑ +1% | 配速数据逐渐积累 |
+| **骑师** | — | **6%** | ↑ +2% | 基于历史战绩中骑师×本马的胜率/前3率动态计算 |
+| **练马师** | — | **4%** | ↑ +1% | 基于历史战绩中练马师×本马的胜率/前3率动态计算 |
+| **档位** | — | **5%** | ↑ +1% | 同距离档位胜率统计 |
+| **HKJC贴士指数** | — | **5%** | ↑ +1% | 官方信号，与赔率互补 |
+| **外部专家预测** | — | **0%** | — | 信息来源不稳定，已移除 |
+| **赔率系合计** | | **30%** | **↓ -10%** | odds_drift 归零后赔率系仅剩 odds_value |
 | **轻磅加分** | — | **加分项** | +5~+11 | v1.6.3：负磅<120磅加分，HV短途额外加成 |
 | **TJ组合加分** | — | **加分项** | +6~+10 | v1.6.3：顶级骑练组合白名单加分 |
 | **合计** | | **100%** | | |
@@ -275,62 +275,53 @@ def get_weights(venue, distance, track_type, race_scenario):
     场景（race_scenario）可选值：
         "normal"      - 普通场次（默认）
         "newcomer"    - 初出马
-        "class_down"  - 降班马
-        "class_up"    - 升班马
+        "newcomer"    - 初次登场（无同条件历史战绩）
     """
-    # 默认权重（v1.4.12，与 config.py DEFAULT_WEIGHTS 一致）
+    # 默认权重（v1.6.6，与 config.py DEFAULT_WEIGHTS 一致）
     weights = {
-        "history_same_condition": 0.13,   # 同距离+同场地历史战绩（含时间衰减）
-        "history_same_venue":     0.17,   # 同场地（不限距离）历史战绩
-        "class_fit":              0.07,   # 班次适配度
-        "odds_value":             0.22,   # 临场赔率综合评分（v1.4.11）
-        "odds_drift":             0.18,   # 赔率走势（v1.4.12 opening_odds 修复）
-        "sectional":              0.08,   # 配速/分段指数（临时降权）
-        "jockey":                 0.04,   # 骑师（基于本马历史战绩动态计算）
-        "trainer":                0.03,   # 练马师（基于本马历史战绩动态计算）
-        "barrier":                0.04,   # 档位
-        "tips_index":             0.04,   # HKJC 贴士指数（v1.4.12 降低共线）
+        "history_same_condition": 0.15,   # 同距离+同场地历史战绩（含时间衰减）
+        "history_same_venue":     0.18,   # 同场地（不限距离）历史战绩
+        "class_fit":              0.08,   # 班次适配度
+        "odds_value":             0.30,   # 临场赔率综合评分（v1.6.6 主要市场共识信号）
+        "odds_drift":             0.00,   # 赔率走势（暂无法获取，逻辑保留）
+        "sectional":              0.09,   # 配速/分段指数
+        "jockey":                 0.06,   # 骑师（基于本马历史战绩动态计算）
+        "trainer":                0.04,   # 练马师（基于本马历史战绩动态计算）
+        "barrier":                0.05,   # 档位
+        "tips_index":             0.05,   # HKJC 贴士指数
         "expert":                 0.00,   # 已移除
     }
-    
+
     # 场景调整
     if race_scenario == "newcomer":
         weights["history_same_condition"] = 0.00
         weights["history_same_venue"]     = 0.00
-        weights["class_fit"]              = 0.15
-        weights["tips_index"]             = 0.08
-        weights["jockey"]                 = 0.12
-        weights["trainer"]                = 0.08
+        weights["odds_value"]             = 0.40   # 初出马更依赖市场信号
+        weights["tips_index"]            = 0.10
+        weights["jockey"]                = 0.11
+        weights["trainer"]               = 0.13
+        weights["class_fit"]              = 0.16
+        weights["sectional"]              = 0.05
 
-    elif race_scenario == "class_down":
-        weights["class_fit"]              = 0.15
-        weights["odds_drift"]             = 0.22
-        weights["tips_index"]             = 0.02
-        weights["history_same_condition"] = 0.08
-        weights["history_same_venue"]     = 0.13
-
-    elif race_scenario == "class_up":
-        weights["history_same_condition"] = 0.07
-        weights["history_same_venue"]     = 0.12
-        weights["odds_drift"]             = 0.22
-        weights["tips_index"]             = 0.02
+    # ⚠️ 降班马/升班马场景暂未在 weights.py 中实现
+    # 如需启用，参考上方 base weights + 场地/距离调整自行扩展
 
     # 场地调整
     if venue == "HV":
-        weights["barrier"]              = 0.08   # 转弯急，内档优势
-        weights["history_same_venue"]   -= 0.04
+        weights["barrier"]            += 0.03   # 0.05 → 0.08
+        weights["history_same_venue"] -= 0.03   # 0.18 → 0.15
 
     # 距离调整
     if distance >= 1800:
-        weights["sectional"]  += 0.05
-        weights["odds_value"] -= 0.05
+        weights["sectional"]  += 0.05   # 0.09 → 0.14
+        weights["odds_value"] -= 0.05   # 0.30 → 0.25
 
     # 泥地调整
     if track_type == "dirt":
         weights["history_same_condition"] = 0.05
-        weights["history_same_venue"]     = 0.05
-        weights["class_fit"]             += 0.02
-    
+        weights["history_same_venue"]     = 0.00
+        weights["class_fit"]             += 0.05
+
     return weights
 ```
 

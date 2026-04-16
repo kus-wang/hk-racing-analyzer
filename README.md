@@ -14,9 +14,9 @@
 
 | 功能 / Feature | 描述 / Description |
 |----------------|---------------------|
-| **多维度分析 / Multi-dimensional** | 12个评分维度：赔率综合(22%)、赔率走势(18%)、同距离同场地历史(13%)、同场地历史(17%)、配速(8%)、骑师(4%)、练马师(3%)、档位(4%)、班次适配(7%)、贴士指数(4%)、轻磅马加分(独立)、TJ组合加分(独立) |
+| **多维度分析 / Multi-dimensional** | 12个评分维度：赔率综合(30%)、同距离同场地历史(15%)、同场地历史(18%)、配速(9%)、骑师(6%)、练马师(4%)、档位(5%)、班次适配(8%)、贴士指数(5%)、轻磅马加分(独立)、TJ组合加分(独立) |
 | **HKJC API 优先架构 / API-First** | GraphQL API 优先 + 官方页面自动回退，实时获取赛事数据 / GraphQL API priority with automatic page-scraping fallback |
-| **智能投注推荐 / Smart Betting** | 保守化策略：A场→双马位置、B场→连赢、C场→连赢、D场→位置；概率优势<15%自动降级 / Conservative strategy: A→DUO_PLACE, B→Q, C→Q, D→PLACE; auto-downgrade when edge <15% |
+| **智能投注推荐 / Smart Betting** | 保守化策略：A场→位置Q、B场→位置Q、C场→位置、D场→位置；概率优势<15%自动降级 / Conservative strategy: A→PLACE_Q, B→PLACE_Q, C→PLACE, D→PLACE; auto-downgrade when edge <15% |
 | **轻磅马加分 / Weight Bonus** | 负磅越低加分越多，跑马地短途额外加成 / Light-weight bonus with Happy Valley short-distance boost |
 | **TJ组合加分 / TJ Combo Bonus** | 顶级骑师+练马师白名单组合额外加分 / Top Jockey+Trainer combo whitelist bonus |
 | **自我进化引擎 / Self-Evolution** | 对比预测与实际赛果，生成权重优化建议 / Compares predictions with actual results, generates optimization suggestions |
@@ -189,9 +189,10 @@ hk-racing-analyzer/
 
 | 版本 / Version | 日期 / Date | 主要更新 / Highlights |
 |---------------|-------------|----------------------|
-| [v1.6.5](RELEASE_NOTES.md#v165--2026-04-12) | 2026-04-12 | 投注策略重构：位置优先，命中率第一。C场→PLACE、B场→双马位置、Q连赢基本移除 / Betting refactor: PLACE-first. C→PLACE, B→DUO_PLACE, Q mostly removed. Hit rate prioritized |
+| [v1.6.6](RELEASE_NOTES.md#v166--2026-04-16) | 2026-04-16 | 权重重新分配：odds_value 30%(+8%)、odds_drift 0%(-18%)；回测缓存污染修复；玩法命名统一为 HKJC 术语；PLACE_Q 触发条件收严；位置推荐改推 top2 / Weight rebalancing: odds_value 30%(+8%), odds_drift 0%(-18%); backtest cache pollution fix; unified HKJC terminology; stricter PLACE_Q conditions; position bets now recommend top2 |
+| [v1.6.5](RELEASE_NOTES.md#v165--2026-04-12) | 2026-04-12 | 投注策略重构：位置优先，命中率第一。C场→PLACE、B场→位置Q、Q连赢基本移除 / Betting refactor: PLACE-first. C→PLACE, B→PLACE_Q, Q mostly removed. Hit rate prioritized |
 | [v1.6.4](RELEASE_NOTES.md#v164--2026-04-12) | 2026-04-12 | Softmax动态温度整体+0.5：超悬殊场6.5、大差异场5.5、正常场5.0、均衡场4.5。回测显示高分马命中率偏低 / Softmax T globally +0.5: 6.5/5.5/5.0/4.5. Backtest showed high-score horses overestimated |
-| [v1.6.3](RELEASE_NOTES.md#v163--2026-04-09) | 2026-04-09 | 轻磅马加分+顶级TJ组合加分；投注策略保守化（双马位置DUO_PLACE）；修复批量预测2-11场全空+赛马日误判 / Weight bonus + TJ combo bonus; conservative betting (DUO_PLACE); fix batch predict & race-day detection bugs |
+| [v1.6.3](RELEASE_NOTES.md#v163--2026-04-09) | 2026-04-09 | 轻磅马加分+顶级TJ组合加分；投注策略保守化（双马位置PLACE_Q）；修复批量预测2-11场全空+赛马日误判 / Weight bonus + TJ combo bonus; conservative betting (PLACE_Q); fix batch predict & race-day detection bugs |
 | [v1.6.2](RELEASE_NOTES.md#v162--2026-04-09) | 2026-04-09 | 基于回测优化：Softmax温度调整+独赢降级条件+odds_drift权重转移 / Backtest-driven: softmax tuning, WIN→PLACE downgrade, odds_drift weight transfer |
 | [v1.6.1](RELEASE_NOTES.md#v161--2026-04-09) | 2026-04-09 | 修复backtest历史日期场地误判 / Fix backtest venue misidentification for historical dates |
 | [v1.6.0](RELEASE_NOTES.md#v160--2026-04-08) | 2026-04-08 | HKJC API 优先架构：排位表/赔率/赛马日检测/赛果名次先走 GraphQL，失败自动回退页面 / HKJC API-first architecture with automatic page fallback |

@@ -4,22 +4,97 @@
 
 ---
 
+## v1.6.6 — 2026-04-16
+
+### 🐛 修复：回测时缓存污染导致赛果抓取失败（预测缓存中毒）
+
+**问题**：回测模式（`--mode backtest`）抓取实际赛果时，全部场次报"解析失败"。根因是**两份缓存同时被预测时的赛前数据污染**：
+
+1. **API race 缓存**（`api_client.py`）：昨天 14:30 预测时，HKJC API 返回 `finalPosition=0`（马未跑），以 `race_result` TTL=7天 缓存。今天回测命中该缓存，`_parse_result_api()` 因 `finalPosition=0` 不在 1-14 范围而返回 None。
+
+2. **HTML result 缓存**（`scheduler_cache.py`）：预测时 `fetch_html()` 缓存了"赛前排位表 HTML"（约 161KB）到 `result_2026-04-15_HV_{n}` key，TTL=7天。今天回测命中该缓存，`_parse_result_html()` 试图解析排位表而非赛果页，结构不匹配导致解析失败。
+
+**修复**（`race_results.py`）：
+- `fetch_actual_results()` 中 `get_race_data(force_refresh=False)` → `force_refresh=True`
+- 回测时强制刷新 API 缓存，绕过赛前 finalPosition=0 的旧缓存，拿到真实赛果
+- HTML fallback 仅作为极端兜底（HKJC API 完全不可用时），正常情况不触发
+
+**数据获取策略澄清**：
+- **正常预测**：API 优先 → 页面回退（API 故障时）
+- **回测赛果**：API 强制刷新 → 页面回退（API 彻底不可用时）
+- 页面抓取不是"并行方案"，而是"最后兜底"。若回测时频繁走到页面回退，说明 API 有问题，需要排查。
+
+### 🔧 规范：玩法命名统一为 HKJC 官方术语（betting.py）
+
+**背景**：`betting.py` 中 `DUO_PLACE`（内部命名）与 HKJC 官方玩法名称 `PLACE_Q`（Place Quinella / 位置Q）不一致，导致代码中两种名称混用（如 `evolution_report.py` 输出"双马位置"但存档字段为 `PLACE_Q`）。
+
+**变更**：
+- `BET_DUO_PLACE` → `BET_PLACE_QUINELLA`（常量重命名）
+- 所有输出文案"双马位置" → "位置Q"
+- `check_bet_hit()` 中 `BET_DUO_PLACE` 判断分支 → `BET_PLACE_QUINELLA`
+- 与 v1.6.5 的 `DUO_PLACE → PLACE_Q` 描述保持一致
+
+### ⚖️ 权重调整：赔率权重重新分配（config.py / weights.py / analysis_weights.md）
+
+**背景**：odds_drift（赔率走势）数据暂时无法获取，权重形同虚设；同时 odds_value 占比偏低，市场共识信号未充分利用。
+
+**变更（默认场景）**：
+
+| 维度 | v1.6.5 | v1.6.6 | 变化 |
+|------|--------|--------|------|
+| odds_value | 22% | **30%** | ↑ +8% |
+| odds_drift | 18% | **0%** | ↓ -18%（保留评分逻辑，暂无数据） |
+| history_same_condition | 13% | **15%** | ↑ +2% |
+| history_same_venue | 17% | **18%** | ↑ +1% |
+| class_fit | 7% | **8%** | ↑ +1% |
+| sectional | 8% | **9%** | ↑ +1% |
+| jockey | 4% | **6%** | ↑ +2% |
+| trainer | 3% | **4%** | ↑ +1% |
+| barrier | 4% | **5%** | ↑ +1% |
+| tips_index | 4% | **5%** | ↑ +1% |
+
+**变更（初出马场景，--scenario newcomer）**：
+
+| 维度 | v1.6.5 | v1.6.6 |
+|------|--------|--------|
+| odds_value | 22% | **40%** |
+| tips_index | 8% | **10%** |
+| jockey | 12% | **11%** |
+| trainer | 8% | **13%** |
+
+初出马场景：赔率+贴士+骑师+练马师 = **74% 市场依赖型**维度，其余占 26%。
+
+### 🎯 投注策略优化（betting.py）
+
+**① PLACE_Q 触发条件收严**：
+- 原条件：仅 `odds1 ≤ 8`
+- 新条件：`|p1 - p2| ≤ 10%` 且 `p2 ≥ 20%` 且 `odds1 ≤ 8`
+- 目的：避免两匹马差距大时仍推位置Q，提高命中率
+
+**② 位置推荐改推 top2**：
+- 场型 A/B/C/D 的位置推荐，全部从 `top1` 改为 `top2`
+- 理由：top1 概率被赔率系统高估，top2 是被低估的实力派，更容易进前3
+
+---
+
 ## v1.6.5 — 2026-04-12
 
 ### 🔧 重构投注推荐策略：位置优先，命中率第一
 
-**背景**：历史回测显示 Q（连赢）命中率极低（0%），DUO_PLACE 命中率约 20%，而位置（PLACE）命中率理论值最高（约 33%）。
+**背景**：历史回测显示 Q（连赢）命中率极低（0%），PLACE_Q（位置Q）命中率约 20%，而位置（PLACE）命中率理论值最高（约 33%）。
 
 **变更**：
 
 | 场型 | 原推荐 | 新推荐 | 理由 |
 |------|--------|--------|------|
 | C（标准三强场） | Q 连赢 | **PLACE 位置** | Q 要求前2名，命中率太低 |
-| B（双强对决场） | Q 连赢 | **DUO_PLACE 双马位置** | 两匹都在前3即中，比Q宽松 |
-| A（高置信场） | DUO_PLACE / WIN | DUO_PLACE / WIN（不变） | 仅在赔率≤8时推荐DUO_PLACE，>8降级位置 |
+| B（双强对决场） | Q 连赢 | **PLACE_Q 位置Q** | 两匹都在前3即中，比Q宽松 |
+| A（高置信场） | PLACE_Q / WIN | PLACE_Q / WIN（不变） | 仅在赔率≤8时推荐PLACE_Q，>8降级位置 |
 | D（开放冷门场） | PLACE | PLACE（不变） | 已经是位置 |
 
 **连赢 Q 玩法**：基本移除，仅在极高置信（前两名概率和≥88%且概率差<5%）时保留。
+
+**术语统一**：`DUO_PLACE` → `PLACE_Q`（位置Q），使用 HKJC 官方玩法名称，避免歧义。
 
 **修改文件**：`scripts/betting.py` `determine_bet_type()` 逻辑重构
 

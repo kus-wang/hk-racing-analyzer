@@ -23,17 +23,21 @@ def get_weights(venue="ST", distance=1400, track_type="turf", race_scenario="nor
 
     # ── 场景调整 ────────────────────────────────
     if race_scenario == "newcomer":
+        # v1.6.6: odds_value 40%（市场共识） + tips_index 13%（官方信号）+ 骑师13% + 练马师13% = 79%
         weights["history_same_condition"] = 0.00
         weights["history_same_venue"] = 0.00
-        weights["class_fit"] = 0.15
-        weights["tips_index"] = 0.08  # 新马更依赖官方贴士
+        weights["class_fit"] = 0.16
+        weights["odds_value"] = 0.40   # 初出马完全依赖市场定价
+        weights["odds_drift"] = 0.00    # 保留逻辑，暂无数据
+        weights["sectional"] = 0.05
+        weights["tips_index"] = 0.10   # 官方贴士对初出马有参考价值（v1.6.6：从13%降至10%）
         weights["expert"] = 0.00
-        weights["jockey"] = 0.15
+        weights["jockey"] = 0.11
         weights["trainer"] = 0.13
-        # sectional / odds 保持默认
+        weights["barrier"] = 0.05
 
     elif race_scenario == "class_down":
-        weights["class_fit"] = 0.15
+        weights["class_fit"] = 0.16
         weights["odds_value"] = 0.20  # 降班马赔率信号更强
         weights["odds_drift"] = 0.20   # 市场对降班马反应灵敏
         weights["tips_index"] = 0.03  # 降班马降低官方贴士权重
@@ -45,7 +49,7 @@ def get_weights(venue="ST", distance=1400, track_type="turf", race_scenario="nor
         weights["history_same_condition"] = 0.06
         weights["history_same_venue"] = 0.07
         weights["odds_value"] = 0.20
-        weights["odds_drift"] = 0.22   # 升班马赔率走势是关键信号
+        weights["odds_drift"] = 0.00   # v1.6.6: 临场赔率走势暂无数据，归零
         weights["tips_index"] = 0.03  # 升班马降低官方贴士权重
         weights["expert"] = 0.00
 
